@@ -4,6 +4,7 @@
 .import z_fetch_b, z_fetch_w, z_get_var, z_put_var, z_trap, z_pop, z_push
 .import z_op_call, z_op_ret, z_op_print, z_op_print_paddr, z_op_print_addr
 .import z_op_print_char, z_op_print_num, z_op_new_line, z_op_quit
+.import z_op_restart
 .import z_op_store, z_op_load, z_op_storew, z_op_loadw, z_op_storeb, z_op_loadb
 .import z_op_add, z_op_sub, z_op_mul, z_op_div, z_op_mod, z_op_and, z_op_or
 .import z_op_jz, z_op_je, z_op_jl, z_op_jg, z_op_jump, z_op_inc, z_op_dec
@@ -18,6 +19,7 @@
 .import z_op_buffer_mode, z_op_output_stream, z_op_check_arg_count
 .import z_op_tokenise
 .import z_op_aread
+.import z_op_read_char
 .import z_op_random
 .importzp z_opcode, z_opcount, z_ops_lo, z_ops_hi, z_types, z_extop, z_i
 .importzp z_pc, z_tmpw, z_a, z_b, z_call_has_store
@@ -456,9 +458,12 @@ z_br0:    .res 1
     bne @3
     jmp z_op_print
 @3: cmp #3
-    bne @8
+    bne @7
     jsr z_op_print
     jmp z_op_rtrue
+@7: cmp #7
+    bne @8
+    jmp z_op_restart
 @8: cmp #8
     bne @a
     jmp z_op_ret_popped
@@ -705,7 +710,7 @@ z_br0:    .res 1
     jmp z_op_nop              ; sound_effect
 @16: cmp #22
     bne @17
-    jmp z_unimpl              ; read_char — need later
+    jmp z_op_read_char
 @17: cmp #23
     bne @18
     jmp z_unimpl              ; scan_table

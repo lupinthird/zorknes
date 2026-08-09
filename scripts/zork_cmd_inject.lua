@@ -67,11 +67,27 @@ function M.wr(name, val)
 end
 
 function M.waiting()
+  -- Line inject only while aread is active (not read_char / HINT).
+  return M.rd("z_waiting_input") == 1
+end
+
+function M.waiting_any()
   return M.rd("z_waiting_input") ~= 0
 end
 
 function M.on_title()
   return M.rd("title_active") ~= 0
+end
+
+function M.inject_char(ch)
+  -- Deliver one ZSCII char to read_char (HINT). Prefer host_char when present.
+  local ok, addr = pcall(function() return M.addr("host_char") end)
+  if ok and addr then
+    M.wr("host_char", type(ch) == "string" and string.byte(ch) or ch)
+  else
+    M.wr("key_ascii", type(ch) == "string" and string.byte(ch) or ch)
+    M.wr("key_ready", 1)
+  end
 end
 
 -- Hold Start for a few frames via inputPolled (title dismiss / pad submit).
@@ -97,8 +113,10 @@ end
 emu.addEventCallback(on_input_polled, emu.eventType.inputPolled)
 
 function M.skip_title()
-  -- Title accepts Start or Enter; Start is reliable without FBK.
-  M.hold_pad({ start = true }, 4)
+  -- Prefer Enter so title locks INPUT_MODE_KB; inject commits via key_ready.
+  -- (Start would lock pad mode and block keyboard injection.)
+  M.wr("key_ascii", 0x0D)
+  M.wr("key_ready", 1)
 end
 
 -- Queue: list of command strings (uppercase preferred).

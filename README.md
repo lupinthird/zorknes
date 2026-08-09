@@ -18,20 +18,24 @@ Requires [cc65](https://cc65.github.io/) at `C:\cc65\bin` and Python 3 (to split
 
 ## Mesen
 
-**Family BASIC Keyboard (typing):**
+**Title screen — pick one input method (locked for the session):**
+- **Enter** (Family BASIC Keyboard) → keyboard typing only
+- **Start** (gamepad) → word-picker only
+
+**Family BASIC Keyboard (after Enter on title):**
 1. **Settings → Input → Console Type → Famicom** (expansion port devices are Famicom accessories)
 2. **Expansion device → Family Basic Keyboard**
 3. Open **Setup** on the keyboard to see/edit which PC keys map to FBK keys (including F1)
 
-**Gamepad (Player 1) — word picker at the `>` prompt:**
-- **Left / Right** — category: Verb / Adj / Noun / Prep / Nav (bottom row `V:`/`A:`/`N:`/`P:`/`G:`)
+**Gamepad (after Start on title) — word picker at the `>` prompt:**
+- **Left / Right** — category: Verb / Adj / Noun / Prep / Yes-No / Nav (`V:`/`A:`/`N:`/`P:`/`Y:`/`G:`)
 - **Up / Down** — choose word in that category
 - **A** — append word + space to the command
 - **B** — backspace
-- **Start** — submit command (same as Enter); also skips the title screen
-- **Select** or keyboard **F1** — cycle color themes
+- **Start** — submit command (same as Enter)
+- **Select** or keyboard **F1** — cycle color themes (either mode)
 
-Complex lines work on the pad the same way as the keyboard once words are appended, e.g. `KILL` + `TROLL` + `WITH` + `SWORD`.
+`Y:` has **YES / NO / Y / N / HINT**. The first `HINT` only shows a warning — submit `HINT` again to open Invisiclues. On that screen the word picker stays hidden and the pad is rebound: **Up**=P, **Down**=N, **A/Start**=Return, **B**=Q. Keyboard N/P/Enter/Q also work. Complex lines still build the same way, e.g. `KILL` + `TROLL` + `WITH` + `SWORD`.
 
 ## Automated tests (Mesen Lua)
 

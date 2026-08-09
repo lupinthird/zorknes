@@ -1,10 +1,9 @@
-; Gamepad word picker: build z_line_buf via category/word selection.
-; Left/Right = category, Up/Down = word, A = append, B = backspace, START = submit.
-; SELECT is handled in main (palette). Row 29 is reserved HUD chrome.
-
 .include "nes.inc"
+.include "zmachine.inc"
 
-.export pad_ui_on_aread, pad_ui_poll
+; Gamepad word picker: build z_line_buf via category/word selection.
+
+.export pad_ui_on_aread, pad_ui_poll, pad_ui_reset
 .exportzp pad_cat, pad_idx
 
 .import text_put_char, text_newline, text_poke_xy
@@ -18,14 +17,17 @@
 .importzp z_waiting_input, z_line_len, z_ops_lo, z_ops_hi, z_a
 .importzp z_addr
 .importzp cursor_col, cursor_row, win_cur
+.importzp input_mode
 
+INPUT_MODE_PAD = 1
 Z_LINE_MAX = 64
 PAD_CAT_VERB = 0
 PAD_CAT_ADJ  = 1
 PAD_CAT_NOUN = 2
 PAD_CAT_PREP = 3
-PAD_CAT_NAV  = 4
-PAD_CAT_COUNT = 5
+PAD_CAT_ANS  = 4
+PAD_CAT_NAV  = 5
+PAD_CAT_COUNT = 6
 PAD_NOUN_MAX = 32
 ; Solid Gold: ADVENTURER ("cretin"), not pseudo "you" (21 under IT).
 PLAYER_OBJ = 46
@@ -50,6 +52,15 @@ pad_noun_hi: .res PAD_NOUN_MAX
 
 .segment "CODE"
 
+.proc pad_ui_reset
+    lda #0
+    sta pad_aread_arm
+    sta pad_cat
+    sta pad_idx
+    sta pad_noun_count
+    rts
+.endproc
+
 ; Call when z_waiting_input becomes true (once per aread).
 .proc pad_ui_on_aread
     lda #0
@@ -62,8 +73,14 @@ pad_noun_hi: .res PAD_NOUN_MAX
 
 ; While waiting for line input — handle pad1_pressed edges.
 .proc pad_ui_poll
+    lda input_mode
+    cmp #INPUT_MODE_PAD
+    beq @modeok
+    rts
+@modeok:
     lda z_waiting_input
-    bne @go
+    cmp #ZWAIT_AREAD
+    beq @go
     lda #0
     sta pad_aread_arm
     rts
@@ -195,6 +212,8 @@ pad_noun_hi: .res PAD_NOUN_MAX
     beq @n
     cmp #PAD_CAT_PREP
     beq @p
+    cmp #PAD_CAT_ANS
+    beq @y
     lda #NAV_COUNT
     rts
 @v:
@@ -209,6 +228,9 @@ pad_noun_hi: .res PAD_NOUN_MAX
 @p:
     lda #PREP_COUNT
     rts
+@y:
+    lda #ANS_COUNT
+    rts
 .endproc
 
 ; Resolve current word → pad_word_lo/hi (null-terminated ASCII), C=0 ok / C=1 empty
@@ -222,6 +244,8 @@ pad_noun_hi: .res PAD_NOUN_MAX
     beq @adj
     cmp #PAD_CAT_PREP
     beq @prep
+    cmp #PAD_CAT_ANS
+    beq @ans
     ; nav
     lda pad_idx
     cmp #NAV_COUNT
@@ -267,6 +291,18 @@ pad_noun_hi: .res PAD_NOUN_MAX
     lda prep_ptrs,x
     sta pad_word_lo
     lda prep_ptrs+1,x
+    sta pad_word_hi
+    clc
+    rts
+@ans:
+    lda pad_idx
+    cmp #ANS_COUNT
+    bcs @fail
+    asl a
+    tax
+    lda ans_ptrs,x
+    sta pad_word_lo
+    lda ans_ptrs+1,x
     sta pad_word_hi
     clc
     rts
@@ -613,6 +649,8 @@ ATTR_TRANSBIT   = 29
     beq @pn
     cmp #PAD_CAT_PREP
     beq @pp
+    cmp #PAD_CAT_ANS
+    beq @py
     lda #'G'
     jmp @pout
 @pv:
@@ -626,6 +664,9 @@ ATTR_TRANSBIT   = 29
     jmp @pout
 @pp:
     lda #'P'
+    jmp @pout
+@py:
+    lda #'Y'
 @pout:
     ldx #0
     ldy #HUD_ROW
@@ -754,6 +795,17 @@ p_out: .byte "OUT", 0
 p_over: .byte "OVER", 0
 p_under: .byte "UNDER", 0
 p_about: .byte "ABOUT", 0
+
+; Finish / YES? prompts (Solid Gold: YES/Y/NO/N/HINT + menu verbs elsewhere)
+ANS_COUNT = 5
+ans_ptrs:
+    .word y_yes, y_no, y_y, y_n, y_hint
+
+y_yes: .byte "YES", 0
+y_no: .byte "NO", 0
+y_y: .byte "Y", 0
+y_n: .byte "N", 0
+y_hint: .byte "HINT", 0
 
 NAV_COUNT = 10
 nav_ptrs:

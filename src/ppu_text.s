@@ -496,13 +496,15 @@ nt_mirror:   .res 1024
     ; A = lines in upper window.
     ; Never fully unsplit on NES: Solid Gold draws status then split(0),
     ; which would let main text clobber the status row. Keep ≥1 line.
+    ; Large splits (HINT uses screen_h-1 ≈ 29) must be allowed — an older
+    ; clamp of ≥15→1 collapsed the Invisiclues UI and wiped lines on CURSET.
     cmp #0
     bne @nz
     lda #1
 @nz:
-    cmp #15
+    cmp #SCREEN_ROWS
     bcc @ok
-    lda #1
+    lda #SCREEN_ROWS-1
 @ok:
     sta ppu_tmp                 ; requested split
     cmp win_split
@@ -647,10 +649,12 @@ nt_mirror:   .res 1024
     lda #0
     sta win_cur
     sta win0_col
-    sta win0_row
     sta win1_col
     sta win1_row
     sta cursor_col
+    ; Main origin is below the status split — not row 0
+    lda win_split
+    sta win0_row
     sta cursor_row
 @ret:
     rts

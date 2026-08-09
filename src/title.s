@@ -7,7 +7,11 @@
 .importzp key_ready, key_ascii, kb_enable
 .importzp pad1_pressed
 .export title_show, title_nmi
-.exportzp title_active
+.exportzp title_active, input_mode
+
+; Locked at title dismiss: Enter → keyboard, Start → gamepad word picker.
+INPUT_MODE_KB  = 0
+INPUT_MODE_PAD = 1
 
 ; NMI on + BG $1000 (logo) / $0000 (font)
 PPUCTRL_LOGO = %10010000
@@ -19,6 +23,7 @@ SPLIT_INNER = 138
 
 .segment "ZEROPAGE"
 title_active: .res 1
+input_mode:   .res 1
 title_row:    .res 1
 title_col:    .res 1
 title_lo:     .res 1
@@ -76,8 +81,12 @@ title_hi:     .res 1
     jsr read_pads
     lda pad1_pressed
     and #PAD_START
-    bne @dismiss
+    beq @try_kb
+    lda #INPUT_MODE_PAD
+    sta input_mode
+    jmp @dismiss
 
+@try_kb:
     jsr read_keyboard
     jsr keyboard_poll_chars
     lda key_ready
@@ -87,6 +96,8 @@ title_hi:     .res 1
     lda key_ascii
     cmp #$0D
     bne @frame
+    lda #INPUT_MODE_KB
+    sta input_mode
 @dismiss:
     lda #0
     sta title_active
@@ -133,15 +144,7 @@ title_hi:     .res 1
     lda #>msg_f1
     sta str_ptr+1
     ldx #20
-    ldy #4
-    jsr title_put_str_at
-
-    lda #<msg_enter
-    sta str_ptr
-    lda #>msg_enter
-    sta str_ptr+1
-    ldx #22
-    ldy #7
+    ldy #3
     jsr title_put_str_at
 
     lda #<msg_copy
@@ -149,7 +152,7 @@ title_hi:     .res 1
     lda #>msg_copy
     sta str_ptr+1
     ldx #26
-    ldy #8
+    ldy #1
     jsr title_put_str_at
     rts
 .endproc
@@ -282,12 +285,10 @@ title_hi:     .res 1
 
 .segment "RODATA"
 msg_kb:
-    .byte "FAMILY BASIC KEYBOARD REQUIRED", 0
+    .byte "ENTER=KEYBOARD   START=GAMEPAD", 0
 msg_f1:
-    .byte "F1 = TOGGLE COLOR SCHEME", 0
-msg_enter:
-    .byte "ENTER TO CONTINUE", 0
+    .byte "F1 / SELECT = COLOR SCHEME", 0
 msg_copy:
-    .byte "(C) 2026 LUPIN3RD", 0
+    .byte "github.com/lupinthird/zorknes", 0
 
 .include "../nam/zorklogont.s"

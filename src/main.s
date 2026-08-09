@@ -1,4 +1,5 @@
 .include "nes.inc"
+.include "zmachine.inc"
 
 .import mmc1_init
 .import wait_vblank, ppu_load_font, ppu_clear_nt, text_clear, text_put_str, text_newline
@@ -11,7 +12,8 @@
 .import zmem_init, zmem_copy_dynamic
 .import zvm_boot, zvm_step
 .import z_aread_commit, z_line_buf
-.import pad_ui_poll
+.import z_read_char_commit
+.import pad_ui_poll, pad_ui_reset
 .import title_show
 .import nmi, irq
 .importzp cursor_col, cursor_row, text_dirty, nt_resync, str_ptr, frame_count
@@ -19,9 +21,14 @@
 .importzp key_ready, key_ascii, keys_prev, kb_enable
 .importzp z_running, z_extop, z_pc, z_waiting_input, z_line_len
 .importzp pad1_pressed
+.importzp input_mode
+.importzp z_stream3_depth
+
+INPUT_MODE_KB  = 0
+INPUT_MODE_PAD = 1
 
 .export main, reset
-.exportzp theme_id, palette_dirty
+.exportzp theme_id, palette_dirty, host_char
 
 .segment "ZEROPAGE"
 theme_id:      .res 1
@@ -29,6 +36,7 @@ palette_dirty: .res 1
 hex_tmp:       .res 1
 vm_frame:      .res 1
 z_trap_shown:  .res 1
+host_char:     .res 1      ; nonzero → deliver to read_char (HINT); then cleared
 
 Z_LINE_MAX = 64
 
@@ -79,8 +87,13 @@ Z_LINE_MAX = 64
 
     bit PPUSTATUS
     jsr ppu_load_font
-    jsr title_show              ; logo nametable, ~4s, BG from $1000
+    jsr title_show              ; logo nametable; locks input_mode
+    jsr begin_play_session
+    jmp main
+.endproc
 
+; After title (or soft restart): clear screen, enable NMI, boot VM.
+.proc begin_play_session
     jsr ppu_clear_nt
     lda #THEME_GREEN
     sta theme_id
@@ -98,11 +111,52 @@ Z_LINE_MAX = 64
 
     lda #1
     sta kb_enable
+    lda #0
+    sta z_stream3_depth
+    sta key_ready
+    sta host_char
+    jsr pad_ui_reset
     jsr zvm_boot
-    ; zvm_boot leaves z_running=1 — run until aread/trap
     lda #0
     sta z_trap_shown
+    sta z_extop
+    rts
+.endproc
 
+; QUIT opcode → title screen, then a fresh session (input mode chosen again).
+.proc return_to_title
+    sei
+    lda #0
+    sta PPUCTRL
+    sta PPUMASK
+    sta text_nmi_ok
+    sta kb_enable
+    sta z_waiting_input
+    sta key_ready
+    jsr wait_vblank
+    jsr zmem_copy_dynamic
+    bit PPUSTATUS
+    jsr ppu_load_font
+    jsr title_show
+    jsr begin_play_session
+    cli
+    jmp main
+.endproc
+
+; RESTART opcode → reload story dynamic + boot VM (no title).
+.proc soft_restart_game
+    sei
+    lda #0
+    sta PPUCTRL
+    sta PPUMASK
+    sta text_nmi_ok
+    sta kb_enable
+    sta z_waiting_input
+    sta key_ready
+    jsr wait_vblank
+    jsr zmem_copy_dynamic
+    jsr begin_play_session
+    cli
     jmp main
 .endproc
 
@@ -148,20 +202,36 @@ Z_LINE_MAX = 64
     beq @wait
 
 @input:
+    lda z_waiting_input
+    cmp #ZWAIT_CHAR
+    bne @not_char
+    jmp @read_char
+@not_char:
+    ; SELECT = theme (either mode). Pad read must be atomic vs NMI.
     sei
-    jsr read_keyboard
-    cli
-    jsr keyboard_poll_chars
-
-    ; Gamepad: SELECT = theme; word picker while aread waits
     jsr read_pads
+    cli
     lda pad1_pressed
     and #PAD_SELECT
     beq @no_sel
     jsr palette_cycle
 @no_sel:
-    jsr pad_ui_poll
+    ; Keyboard scan (JOY1 bitbang) after pad read so FBK does not clobber it.
+    sei
+    jsr read_keyboard
+    cli
+    jsr keyboard_poll_chars
 
+    lda input_mode
+    cmp #INPUT_MODE_PAD
+    bne @kb_path
+    jsr pad_ui_poll
+    ; Drop any FBK chars so they cannot mix into the pad-built line
+    lda #0
+    sta key_ready
+    jmp @vm
+
+@kb_path:
     lda key_ready
     beq @vm
     lda key_ascii
@@ -171,7 +241,8 @@ Z_LINE_MAX = 64
 
     ; Line editing only while VM is blocked on aread
     lda z_waiting_input
-    beq @vm
+    cmp #ZWAIT_AREAD
+    bne @vm
     jsr sfx_boop
     lda hex_tmp
     cmp #$0D
@@ -213,11 +284,22 @@ Z_LINE_MAX = 64
     beq @stopped
     ; Idle: VQ drains in NMI; only scroll/clear need a main-thread resync.
     lda nt_resync
-    beq @loop
+    bne @idle_flush
+    jmp @loop
+@idle_flush:
     jsr text_flush_frame
     jmp @loop
 @stopped:
-    ; Stopped and not waiting → trap/quit (show once)
+    lda z_extop
+    cmp #$FF
+    bne @not_quit
+    jmp return_to_title
+@not_quit:
+    cmp #$FE
+    bne @trap_check
+    jmp soft_restart_game
+@trap_check:
+    ; Unimplemented opcode trap — show once, then idle
     lda z_trap_shown
     beq @show_stop
     jmp @loop
@@ -225,16 +307,6 @@ Z_LINE_MAX = 64
     lda #1
     sta z_trap_shown
     jsr text_newline
-    lda z_extop
-    cmp #$FF
-    bne @trap
-    lda #<msg_quit
-    sta str_ptr
-    lda #>msg_quit
-    sta str_ptr+1
-    jsr text_put_str
-    jmp @trapdone
-@trap:
     lda #<msg_trap
     sta str_ptr
     lda #>msg_trap
@@ -250,7 +322,6 @@ Z_LINE_MAX = 64
     jsr print_hex8
     lda z_pc
     jsr print_hex8
-@trapdone:
     jsr text_newline
     jsr text_clear_tile0
     jmp @loop
@@ -277,13 +348,78 @@ Z_LINE_MAX = 64
     beq @run_in
     jsr text_flush_frame
     jmp @input
+
+; Single-key input (HINT / read_char).
+; Invisiclues expects N/P/Return/Q. While waiting for a char:
+;   host_char (if set), else pad remap Up=P Down=N A/Start=Return B=Q,
+;   else FBK key_ready.
+@read_char:
+    lda host_char
+    beq @no_host
+    ldx #0
+    stx host_char
+    jmp @rc_commit_a
+@no_host:
+    ; Pad remap (either title mode) — re-read under SEI for clean edges
+    sei
+    jsr read_pads
+    cli
+    lda pad1_pressed
+    beq @rc_kb
+    sta hex_tmp
+    and #PAD_UP
+    beq @cd
+    lda #'P'
+    jmp @rc_commit_a
+@cd:
+    lda hex_tmp
+    and #PAD_DOWN
+    beq @ca
+    lda #'N'
+    jmp @rc_commit_a
+@ca:
+    lda hex_tmp
+    and #PAD_A
+    bne @cret
+    lda hex_tmp
+    and #PAD_START
+    bne @cret
+    lda hex_tmp
+    and #PAD_B
+    beq @rc_kb
+    lda #'Q'
+    jmp @rc_commit_a
+@cret:
+    lda #ZSCII_RET
+    jmp @rc_commit_a
+
+@rc_kb:
+    sei
+    jsr read_keyboard
+    cli
+    jsr keyboard_poll_chars
+    lda key_ready
+    beq @rc_vm
+    lda key_ascii
+    ldx #0
+    stx key_ready
+    ; Ignore non-printables except Return
+    cmp #ZSCII_RET
+    beq @rc_commit_a
+    cmp #$20
+    bcc @rc_vm
+@rc_commit_a:
+    sta hex_tmp
+    jsr sfx_boop
+    lda hex_tmp
+    jsr z_read_char_commit
+@rc_vm:
+    jmp @vm
 .endproc
 
 .segment "RODATA"
 msg_trap:
     .byte "TRAP OP ", 0
-msg_quit:
-    .byte "GAME QUIT", 0
 
 .segment "VECTORS"
     .word nmi

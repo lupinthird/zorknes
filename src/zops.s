@@ -18,6 +18,7 @@
 .import z_frame_nlcl, z_frame_ofp, z_frame_osp, z_frame_argc, z_argc
 .import z_dbg_a, z_dbg_b, z_dbg_c, z_dbg_d
 .export z_op_call, z_op_ret, z_op_rtrue, z_op_rfalse, z_op_ret_popped, z_op_nop, z_op_quit
+.export z_op_restart
 .export z_op_print, z_op_print_paddr, z_op_print_addr, z_op_print_char, z_op_print_num, z_op_new_line
 .export z_op_store, z_op_load, z_op_storew, z_op_loadw, z_op_storeb, z_op_loadb
 .export z_op_add, z_op_sub, z_op_mul, z_op_div, z_op_mod, z_op_and, z_op_or
@@ -31,10 +32,12 @@
 .export z_op_set_cursor, z_op_get_cursor, z_op_erase_line
 .export z_op_buffer_mode, z_op_output_stream, z_op_check_arg_count
 .export z_op_aread, z_aread_commit, z_line_buf
+.export z_op_read_char, z_read_char_commit
 .export z_print_zscii, z_decode_string_at
 .export z_obj_addr, z_obj_parent, z_obj_child, z_obj_sibling, z_capture_obj_name
 .exportzp z_name_capture
 .exportzp z_rng
+.exportzp z_stream3_depth
 .export pad_name_buf, pad_name_len
 .export z_op_random
 
@@ -83,6 +86,15 @@ pad_name_len: .res 1
     lda #0
     sta z_running
     lda #$FF                ; distinguish quit from opcode trap
+    sta z_extop
+    rts
+.endproc
+
+; Host soft-restart (no title): main sees $FE and reloads dynamic + zvm_boot.
+.proc z_op_restart
+    lda #0
+    sta z_running
+    lda #$FE
     sta z_extop
     rts
 .endproc
@@ -948,7 +960,7 @@ z_stream3_cnt_hi:  .res STREAM3_MAX
 @pause:
     lda #0
     sta z_line_len
-    lda #1
+    lda #ZWAIT_AREAD
     sta z_waiting_input
     lda #0
     sta z_running
@@ -1039,6 +1051,28 @@ z_stream3_cnt_hi:  .res STREAM3_MAX
     sta z_a
     lda #0
     sta z_a+1
+    jsr z_do_store
+    lda #1
+    sta z_running
+    rts
+.endproc
+
+; VAR:22 read_char — pause for one ZSCII key (HINT menus, etc.).
+; time/routine timed input not implemented (treated as wait forever).
+.proc z_op_read_char
+    lda #ZWAIT_CHAR
+    sta z_waiting_input
+    lda #0
+    sta z_running
+    rts
+.endproc
+
+; A = ZSCII character; store result and resume VM.
+.proc z_read_char_commit
+    sta z_a
+    lda #0
+    sta z_a+1
+    sta z_waiting_input
     jsr z_do_store
     lda #1
     sta z_running
