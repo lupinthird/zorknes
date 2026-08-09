@@ -7,7 +7,7 @@
 .export ppu_clear_nt, ppu_load_font, text_clear, text_put_str, text_put_char
 .export text_flush_all, text_flush_nmi, text_flush_frame, text_newline, text_home
 .export text_clear_tile0, text_set_cursor, text_set_cursor_z
-.export text_split_window, text_set_window, text_erase_window
+.export text_split_window, text_set_window, text_erase_window, text_erase_line
 .exportzp cursor_col, cursor_row, text_dirty, str_ptr
 .exportzp win_split, win_cur
 .exportzp tile_off_lo, tile_off_hi, tile_value
@@ -222,32 +222,45 @@ nt_mirror:   .res 1024
     rts
 .endproc
 
-; Z-machine set_cursor: A=col 1-based, X=line 1-based in current window
+; Z-machine set_cursor: A=col 1-based, X=line 1-based in current window.
+; V4/V5: no effect when the lower window is selected.
 .proc text_set_cursor_z
-    ; col
+    ldy win_cur
+    beq @ret
+
+    pha
+    txa
+    pha
+    jsr text_ensure_split1
+    pla
+    tax
+    cpx win_split
+    beq @rest_col
+    bcc @rest_col
+    txa
+    pha
+    jsr text_split_window
+    pla
+    tax
+@rest_col:
+    pla
+
     cmp #0
     bne @c
     lda #1
 @c:
     sec
     sbc #1
+    cmp #SCREEN_COLS
+    bcc @col_ok
+    lda #SCREEN_COLS-1
+@col_ok:
     sta ppu_tmp
-    ; line → screen row
     txa
     bne @l
     ldx #1
-    txa
 @l:
-    dex                     ; 0-based line in window
-    lda win_cur
-    bne @up
-    txa
-    clc
-    adc win_split
-    tax
-    jmp @go
-@up:
-    ; clamp to upper window
+    dex
     cpx win_split
     bcc @go
     ldx win_split
@@ -256,6 +269,8 @@ nt_mirror:   .res 1024
 @go:
     lda ppu_tmp
     jmp text_set_cursor
+@ret:
+    rts
 .endproc
 
 .proc text_clear_tile0
@@ -406,12 +421,62 @@ nt_mirror:   .res 1024
     rts
 .endproc
 
+; Erase from cursor_col through end of cursor_row (Z erase_line value=1).
+; Also used as the building block when games clear by printing spaces —
+; keeping the mirror row consistent avoids prefix ghosts.
+.proc text_erase_line
+    jsr zmem_wram_text_on
+    lda cursor_row
+    jsr row_to_tile_off
+    lda #<nt_mirror
+    clc
+    adc tile_off_lo
+    sta mirror_ptr
+    lda #>nt_mirror
+    adc tile_off_hi
+    sta mirror_ptr+1
+    ldy cursor_col
+    lda #' '
+@loop:
+    cpy #SCREEN_COLS
+    bcs @done
+    sta (mirror_ptr),y
+    iny
+    bne @loop
+@done:
+    jsr zmem_wram_text_off
+    jsr begin_nt_resync
+    rts
+.endproc
+
 .proc text_split_window
-    ; A = lines in upper window (V5: do not clear; appearance unchanged)
+    ; A = lines in upper window.
+    ; Never fully unsplit on NES: Solid Gold draws status then split(0),
+    ; which would let main text clobber the status row. Keep ≥1 line.
+    cmp #0
+    bne @nz
+    lda #1
+@nz:
     cmp #15
     bcc @ok
     lda #1
 @ok:
+    sta ppu_tmp                 ; requested split
+    cmp win_split
+    beq @same
+    bcc @shrink
+    ; Growing / creating: clear rows [0 .. new_split)
+    lda ppu_tmp
+    beq @store
+    lda #0
+    ldx ppu_tmp
+    dex
+    jsr text_erase_rows
+    jmp @store
+@shrink:
+@same:
+@store:
+    lda ppu_tmp
     sta win_split
     ; Spec: if main cursor is no longer in main, move to main origin
     lda win_cur
@@ -425,6 +490,17 @@ nt_mirror:   .res 1024
     lda win_split
     sta cursor_row
     sta win0_row
+@ret:
+    rts
+.endproc
+
+; Ensure upper window exists (Solid Gold may set_window/set_cursor while
+; split is still 0; without a split, main text overwrites the status row).
+.proc text_ensure_split1
+    lda win_split
+    bne @ret
+    lda #1
+    jmp text_split_window
 @ret:
     rts
 .endproc
@@ -461,15 +537,12 @@ nt_mirror:   .res 1024
     sta cursor_row
     rts
 @to_u:
-    ; Spec: selecting upper resets cursor to top-left.
-    ; Clear upper so status redraws don't leave leftover main text.
-    lda win_split
-    beq @uhome
-    lda #0
-    ldx win_split
-    dex
-    jsr text_erase_rows
-@uhome:
+    ; Spec: selecting upper resets cursor to top-left (does not clear).
+    txa
+    pha
+    jsr text_ensure_split1
+    pla
+    tax
     lda #0
     sta cursor_col
     sta cursor_row
@@ -520,7 +593,9 @@ nt_mirror:   .res 1024
     sta cursor_row
     rts
 @all_unsplit:
-    lda #0
+    ; Spec: unsplit. On NES keep a 1-line split so the status row
+    ; stays reserved (Solid Gold redraws status after this).
+    lda #1
     sta win_split
 @all:
     lda #0
@@ -635,8 +710,8 @@ nt_mirror:   .res 1024
     sec
     sbc #$20
 @store:
-    ; Clip (don't wrap) in the upper/status window — we claim width 40
-    ; in the header so Zork runs, but only have 32 NES columns.
+    ; Clip (don't wrap) in the upper/status window — header claims
+    ; Z_HDR_COLS but we only have SCREEN_COLS of tiles.
     ; A must remain the glyph until store_mirror_tile.
     ldx cursor_col
     cpx #SCREEN_COLS
@@ -661,9 +736,14 @@ nt_mirror:   .res 1024
     cmp #SCREEN_COLS
     bcc @done
     lda win_cur
-    bne @done                 ; upper: clip
+    bne @uclip                ; upper: stay on last visible column
     jsr text_newline
 @done:
+    rts
+@uclip:
+    lda #SCREEN_COLS-1
+    sta cursor_col
+    sta win1_col
     rts
 @nl:
     jmp text_newline

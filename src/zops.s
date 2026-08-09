@@ -2,7 +2,7 @@
 .include "zmachine.inc"
 
 .import text_put_char, text_newline, text_clear, text_set_cursor_z, text_home
-.import text_split_window, text_set_window, text_erase_window
+.import text_split_window, text_set_window, text_erase_window, text_erase_line
 .import z_fetch_b, z_fetch_w, z_push, z_pop, z_get_var, z_put_var
 .import z_get_var_ind, z_put_var_ind
 .import z_do_store, z_branch_if, z_trap
@@ -27,7 +27,7 @@
 .export z_op_jin, z_op_insert_obj, z_op_remove_obj
 .export z_op_get_parent, z_op_get_sibling, z_op_get_child, z_op_print_obj
 .export z_op_erase_window, z_op_split_window, z_op_set_window, z_op_set_text_style
-.export z_op_set_cursor, z_op_get_cursor
+.export z_op_set_cursor, z_op_get_cursor, z_op_erase_line
 .export z_op_buffer_mode, z_op_output_stream, z_op_check_arg_count
 .export z_op_aread, z_aread_commit, z_line_buf
 .export z_print_zscii, z_decode_string_at
@@ -55,6 +55,7 @@ z_obj_save: .res 2          ; target obj surviving z_obj_addr (clobbers z_obj_nu
 z_attr:     .res 1
 z_slot:     .res 1
 z_paddr:    .res 3          ; 24-bit unpacked packed-address
+z_stream3_depth: .res 1     ; output stream 3 nesting (0 = off)
 
 .segment "CODE"
 
@@ -755,13 +756,20 @@ z_paddr:    .res 3          ; 24-bit unpacked packed-address
 .endproc
 ; --- Text ---
 
+STREAM3_MAX = 4
+
 .segment "BSS"
 z_line_buf: .res Z_LINE_MAX
+z_stream3_addr_lo: .res STREAM3_MAX
+z_stream3_addr_hi: .res STREAM3_MAX
+z_stream3_cnt_lo:  .res STREAM3_MAX
+z_stream3_cnt_hi:  .res STREAM3_MAX
 
 .segment "CODE"
 
 .proc z_op_new_line
-    jmp text_newline
+    lda #13
+    jmp z_print_zscii
 .endproc
 
 ; VAR:4 aread — pause VM for a line of input (Z5 store = terminating char).
@@ -896,7 +904,7 @@ z_line_buf: .res Z_LINE_MAX
     lda z_a
     bne @go
     lda #'0'
-    jmp text_put_char
+    jmp z_print_zscii
 @go:
     lda #0
     sta z_b                 ; digit count on stack via PHA
@@ -930,7 +938,7 @@ z_line_buf: .res Z_LINE_MAX
     jmp @divlp
 @print:
     pla
-    jsr text_put_char
+    jsr z_print_zscii
     dec z_b
     bne @print
     rts
@@ -1220,6 +1228,45 @@ z_line_buf: .res Z_LINE_MAX
 .endproc
 
 .proc z_print_zscii
+    ; Stream 3: divert to memory table (no screen output).
+    ldx z_stream3_depth
+    beq @screen
+    dex
+    cmp #13
+    beq @st3
+    cmp #32
+    bcc @done
+    cmp #126
+    bcs @done
+@st3:
+    sta z_ch
+    txa
+    pha                     ; save stream index (zmem_* clobbers)
+    ; addr = table + 2 + count
+    lda z_stream3_addr_lo,x
+    clc
+    adc #2
+    sta z_addr
+    lda z_stream3_addr_hi,x
+    adc #0
+    sta z_addr+1
+    lda z_addr
+    clc
+    adc z_stream3_cnt_lo,x
+    sta z_addr
+    lda z_addr+1
+    adc z_stream3_cnt_hi,x
+    sta z_addr+1
+    lda z_ch
+    jsr zmem_storeb
+    pla
+    tax
+    ; count++
+    inc z_stream3_cnt_lo,x
+    bne @done
+    inc z_stream3_cnt_hi,x
+    rts
+@screen:
     cmp #13
     bne @n
     jmp text_newline
@@ -1238,6 +1285,54 @@ z_line_buf: .res Z_LINE_MAX
     jmp text_put_char
 @done:
     rts
+.endproc
+
+.proc z_op_output_stream
+    ; ops[0]=stream (+select / -deselect / 0=nop); ops[1]=table if selecting 3
+    lda z_ops_lo
+    ora z_ops_hi
+    beq @ret
+    lda z_ops_hi
+    bmi @desel
+    ; select
+    lda z_ops_lo
+    cmp #3
+    bne @ret                 ; 1 always on; 2/4 ignored
+    ldx z_stream3_depth
+    cpx #STREAM3_MAX
+    bcs @ret
+    lda z_ops_lo+1
+    sta z_stream3_addr_lo,x
+    lda z_ops_hi+1
+    sta z_stream3_addr_hi,x
+    lda #0
+    sta z_stream3_cnt_lo,x
+    sta z_stream3_cnt_hi,x
+    inc z_stream3_depth
+@ret:
+    rts
+@desel:
+    ; absolute stream number
+    lda #0
+    sec
+    sbc z_ops_lo
+    cmp #3
+    bne @ret
+    ldx z_stream3_depth
+    beq @ret
+    dex
+    stx z_stream3_depth
+    ; write character count to table word
+    lda z_stream3_addr_lo,x
+    sta z_addr
+    lda z_stream3_addr_hi,x
+    sta z_addr+1
+    lda z_stream3_cnt_lo,x
+    pha
+    lda z_stream3_cnt_hi,x
+    tax
+    pla
+    jmp zmem_storew
 .endproc
 
 ; --- Objects / properties (v4+ 14-byte objects) ---
@@ -2230,6 +2325,18 @@ z_line_buf: .res Z_LINE_MAX
     lda z_ops_lo
     jmp text_erase_window
 .endproc
+
+.proc z_op_erase_line
+    ; Spec: value is usually 1 — erase from cursor to end of line.
+    ; Other values undefined; treat like 1. Value 0 = no-op.
+    lda z_ops_lo
+    ora z_ops_hi
+    beq @ret
+    jmp text_erase_line
+@ret:
+    rts
+.endproc
+
 .proc z_op_split_window
     lda z_ops_lo
     jmp text_split_window
@@ -2296,9 +2403,7 @@ z_line_buf: .res Z_LINE_MAX
 .proc z_op_buffer_mode
     rts
 .endproc
-.proc z_op_output_stream
-    rts
-.endproc
+; (z_op_output_stream defined with z_print_zscii above)
 
 .proc z_op_check_arg_count
     ; branch if z_argc >= ops[0]

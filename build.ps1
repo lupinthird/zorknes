@@ -4,8 +4,14 @@ $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $root
 New-Item -ItemType Directory -Force -Path build | Out-Null
 
-# Ensure story banks exist
-if (-not (Test-Path "build/story_banks/story0.bin")) {
+# Ensure story banks exist and match story/zork1.z5
+$storySrc = "story/zork1.z5"
+$story0 = "build/story_banks/story0.bin"
+$needSplit = -not (Test-Path $story0)
+if (-not $needSplit) {
+    $needSplit = (Get-Item $storySrc).LastWriteTime -gt (Get-Item $story0).LastWriteTime
+}
+if ($needSplit) {
     python -c @"
 from pathlib import Path
 story=Path('story/zork1.z5').read_bytes()

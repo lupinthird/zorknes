@@ -36,9 +36,13 @@ PPUMASK_ON  = %00001010
 THEME_GREEN = 0
 THEME_GRAY  = 1
 THEME_C64   = 2
-THEME_COUNT = 3
+THEME_AMBER = 3
+THEME_COUNT = 4
 
-SCREEN_COLS = 32          ; full nametable width
+SCREEN_COLS = 32          ; physical nametable width
 SCREEN_ROWS = 30          ; tile rows (excl. attribute table)
+; Header width = physical width. Solid Gold's startup check (jl width 38)
+; is patched to 32 in story/zork1.z5 so it accepts NES columns.
+Z_HDR_COLS  = SCREEN_COLS
 TEXT_COL0   = 0
 TEXT_ROW0   = 0           ; main top comes from win_split

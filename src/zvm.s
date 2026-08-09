@@ -274,8 +274,8 @@ z_dbg_d:      .res 1
     jsr zmem_loadb_phys
     sta z_obj_base
 
-    ; V5 header: screen geometry. Zork I Solid Gold quits if width < 38.
-    ; Claim 38 (min) so status math is closer to our 32-col wrap/clip.
+    ; V5 header: screen geometry (matches physical SCREEN_COLS/ROWS).
+    ; story/zork1.z5 startup check patched to accept width 32.
     lda #0
     sta z_addr+1
     lda #$20
@@ -284,11 +284,11 @@ z_dbg_d:      .res 1
     jsr zmem_storeb
     lda #$21
     sta z_addr
-    lda #38
+    lda #Z_HDR_COLS
     jsr zmem_storeb
     lda #$22
     sta z_addr
-    lda #38                 ; width in units (1x1 font)
+    lda #Z_HDR_COLS         ; width in units (1x1 font)
     jsr zmem_storeb
     lda #$23
     sta z_addr

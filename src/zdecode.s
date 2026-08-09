@@ -14,7 +14,7 @@
 .import z_op_jin, z_op_insert_obj, z_op_remove_obj
 .import z_op_get_parent, z_op_get_sibling, z_op_get_child, z_op_print_obj
 .import z_op_erase_window, z_op_split_window, z_op_set_window, z_op_set_text_style
-.import z_op_set_cursor, z_op_get_cursor
+.import z_op_set_cursor, z_op_get_cursor, z_op_erase_line
 .import z_op_buffer_mode, z_op_output_stream, z_op_check_arg_count
 .import z_op_tokenise
 .import z_op_aread
@@ -685,7 +685,7 @@ z_br0:    .res 1
     jmp z_op_erase_window
 @e: cmp #14
     bne @f
-    jmp z_op_nop              ; erase_line
+    jmp z_op_erase_line
 @f: cmp #15
     bne @10
     jmp z_op_set_cursor
