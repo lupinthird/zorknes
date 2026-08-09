@@ -5,6 +5,7 @@
 *.lbl
 *.map
 *.dbg
+logo/
 
 # Local scratch / caches
 **/__pycache__/

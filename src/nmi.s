@@ -3,9 +3,11 @@
 .import palette_apply_now, palette_cycle
 .import read_pads
 .import text_flush_nmi
+.import title_nmi
 .export nmi, restore_scroll
 .exportzp frame_count
 .importzp palette_dirty, pad1_pressed, kb_enable
+.importzp title_active
 
 .segment "ZEROPAGE"
 frame_count: .res 1
@@ -23,8 +25,12 @@ oam: .res 256
     tya
     pha
 
-    ; No OAM DMA yet (no sprites). Do not bank WRAM/CHR here.
+    lda title_active
+    beq @game
+    jsr title_nmi
+    jmp @done
 
+@game:
     lda kb_enable
     bne @no_pads
     jsr read_pads
@@ -38,10 +44,10 @@ oam: .res 256
     beq @no_pal
     jsr palette_apply_now
 @no_pal:
-    ; Drain VQ (no WRAM banking — keep MMC1 clear of the main thread).
     jsr text_flush_nmi
     jsr restore_scroll
 
+@done:
     inc frame_count
 
     pla

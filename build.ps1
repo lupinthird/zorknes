@@ -29,7 +29,7 @@ $ca65 = "C:\cc65\bin\ca65.exe"
 $cl65 = "C:\cc65\bin\cl65.exe"
 $srcs = @(
     "header","story","story_font","mmc1","palette","pads","sfx",
-    "keyboard","zmem","ppu_text","zvm","zdecode","zops","ztoken","nmi","main"
+    "keyboard","zmem","ppu_text","title","zvm","zdecode","zops","ztoken","nmi","main"
 )
 
 foreach ($s in $srcs) {

@@ -1,19 +1,19 @@
 .include "nes.inc"
 
 .import mmc1_init
-.import wait_vblank, ppu_load_font, ppu_clear_nt, text_clear, text_put_str, text_home, text_newline
+.import wait_vblank, ppu_load_font, ppu_clear_nt, text_clear, text_put_str, text_newline
 .import text_clear_tile0
-.import palette_apply_now, palette_cycle
+.import palette_apply_now
 .import read_keyboard, keyboard_poll_chars, sfx_boop
-.import text_put_char, text_flush_all, text_flush_frame
-.import zmem_init, zmem_copy_dynamic, zmem_loadb_phys
+.import text_put_char, text_flush_frame
+.import zmem_init, zmem_copy_dynamic
 .import zvm_boot, zvm_step
 .import z_aread_commit, z_line_buf
+.import title_show
 .import nmi, irq
 .importzp cursor_col, cursor_row, text_dirty, nt_resync, str_ptr, frame_count
 .importzp text_nmi_ok
 .importzp key_ready, key_ascii, keys_prev, kb_enable
-.importzp z_static_base, z_himem, z_pc_init, z_phys
 .importzp z_running, z_extop, z_pc, z_waiting_input, z_line_len
 
 .export main, reset
@@ -75,45 +75,14 @@ Z_LINE_MAX = 64
 
     bit PPUSTATUS
     jsr ppu_load_font
-    jsr ppu_clear_nt
+    jsr title_show              ; logo nametable, ~4s, BG from $1000
 
+    jsr ppu_clear_nt
     lda #THEME_GREEN
     sta theme_id
     jsr palette_apply_now
-    jsr restore_scroll_init
-
+    jsr restore_scroll_init     ; BG pattern back to $0000 (font)
     jsr text_clear
-    lda #<msg_hello
-    sta str_ptr
-    lda #>msg_hello
-    sta str_ptr+1
-    jsr text_put_str
-    jsr text_newline
-
-    jsr print_header_dump
-    jsr text_newline
-
-    lda #<msg_help
-    sta str_ptr
-    lda #>msg_help
-    sta str_ptr+1
-    jsr text_put_str
-    jsr text_newline
-    jsr text_newline
-
-    jsr text_clear_tile0
-    lda #1
-    sta text_dirty
-    jsr wait_vblank
-    jsr flush_once
-    bit PPUSTATUS
-    lda #$20
-    sta PPUADDR
-    lda #$00
-    sta PPUADDR
-    lda #' '
-    sta PPUDATA
-    jsr restore_scroll_init
 
     lda #PPUCTRL_NMI
     sta PPUCTRL
@@ -131,45 +100,6 @@ Z_LINE_MAX = 64
     sta z_trap_shown
 
     jmp main
-.endproc
-
-.proc print_header_dump
-    lda #0
-    sta z_phys
-    sta z_phys+1
-    sta z_phys+2
-    jsr zmem_loadb_phys
-    sta hex_tmp
-    lda #<msg_ver
-    sta str_ptr
-    lda #>msg_ver
-    sta str_ptr+1
-    jsr text_put_str
-    lda hex_tmp
-    jsr print_hex8
-    jsr text_newline
-
-    lda #<msg_stat
-    sta str_ptr
-    lda #>msg_stat
-    sta str_ptr+1
-    jsr text_put_str
-    lda z_static_base+1
-    jsr print_hex8
-    lda z_static_base
-    jsr print_hex8
-    jsr text_newline
-
-    lda #<msg_pc
-    sta str_ptr
-    lda #>msg_pc
-    sta str_ptr+1
-    jsr text_put_str
-    lda z_pc_init+1
-    jsr print_hex8
-    lda z_pc_init
-    jsr print_hex8
-    rts
 .endproc
 
 .proc print_hex8
@@ -203,12 +133,6 @@ Z_LINE_MAX = 64
     lda #0
     sta PPUSCROLL
     sta PPUSCROLL
-    rts
-.endproc
-
-.proc flush_once
-    jsr text_flush_all
-    jsr restore_scroll_init
     rts
 .endproc
 
@@ -340,16 +264,6 @@ Z_LINE_MAX = 64
 .endproc
 
 .segment "RODATA"
-msg_hello:
-    .byte "NES ZORK I", 0
-msg_help:
-    .byte "F1=THEME  WAIT FOR PROMPT", 0
-msg_ver:
-    .byte "Z-VERSION ", 0
-msg_stat:
-    .byte "STATIC ", 0
-msg_pc:
-    .byte "PC ", 0
 msg_trap:
     .byte "TRAP OP ", 0
 msg_quit:
