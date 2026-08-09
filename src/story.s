@@ -1,0 +1,13 @@
+; Story file banks 0-5 (16 KiB each); bank 6 is story_font.s
+.segment "STORY0"
+    .incbin "../build/story_banks/story0.bin"
+.segment "STORY1"
+    .incbin "../build/story_banks/story1.bin"
+.segment "STORY2"
+    .incbin "../build/story_banks/story2.bin"
+.segment "STORY3"
+    .incbin "../build/story_banks/story3.bin"
+.segment "STORY4"
+    .incbin "../build/story_banks/story4.bin"
+.segment "STORY5"
+    .incbin "../build/story_banks/story5.bin"

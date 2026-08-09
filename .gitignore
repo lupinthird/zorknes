@@ -1,0 +1,19 @@
+# Build outputs
+/build/
+*.o
+*.nes
+*.lbl
+*.map
+*.dbg
+
+# Local scratch / caches
+**/__pycache__/
+*.pyc
+**/mesen_result.txt
+**/mesen_*_out.txt
+**/mesen_*_err.txt
+
+# OS junk
+Thumbs.db
+Desktop.ini
+.DS_Store
