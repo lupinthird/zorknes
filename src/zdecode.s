@@ -18,6 +18,7 @@
 .import z_op_buffer_mode, z_op_output_stream, z_op_check_arg_count
 .import z_op_tokenise
 .import z_op_aread
+.import z_op_random
 .importzp z_opcode, z_opcount, z_ops_lo, z_ops_hi, z_types, z_extop, z_i
 .importzp z_pc, z_tmpw, z_a, z_b, z_call_has_store
 .export z_decode_exec, z_do_store, z_branch_if
@@ -659,12 +660,7 @@ z_br0:    .res 1
     jmp z_op_print_num
 @7: cmp #7
     bne @8
-    ; random: stub return 1
-    lda #1
-    sta z_a
-    lda #0
-    sta z_a+1
-    jmp z_do_store
+    jmp z_op_random
 @8: cmp #8
     bne @9
     jmp z_op_push

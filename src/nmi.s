@@ -1,13 +1,13 @@
 .include "nes.inc"
 
-.import palette_apply_now, palette_cycle
-.import read_pads
+.import palette_apply_now
 .import text_flush_nmi
 .import title_nmi
 .export nmi, restore_scroll
 .exportzp frame_count
-.importzp palette_dirty, pad1_pressed, kb_enable
+.importzp palette_dirty
 .importzp title_active
+.importzp z_rng
 
 .segment "ZEROPAGE"
 frame_count: .res 1
@@ -31,15 +31,6 @@ oam: .res 256
     jmp @done
 
 @game:
-    lda kb_enable
-    bne @no_pads
-    jsr read_pads
-    lda pad1_pressed
-    and #PAD_SELECT
-    beq @no_pads
-    jsr palette_cycle
-@no_pads:
-
     lda palette_dirty
     beq @no_pal
     jsr palette_apply_now
@@ -49,6 +40,15 @@ oam: .res 256
 
 @done:
     inc frame_count
+    ; Stir PRNG every frame so human timing (title wait, typing) diversifies play.
+    ; Scripted lockstep still needs an external reseed (see zork_troll_keyboard.lua).
+    clc
+    lda z_rng
+    adc frame_count
+    sta z_rng
+    bcc @rngok
+    inc z_rng+1
+@rngok:
 
     pla
     tay

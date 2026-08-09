@@ -12,6 +12,7 @@
 .importzp z_waiting_input, z_read_text, z_read_parse, z_line_len, z_i
 .importzp z_extop
 .importzp cursor_col, cursor_row, win_split, win_cur
+.importzp frame_count
 .import z_locals_lo, z_locals_hi, z_saved_lo, z_saved_hi
 .import z_frame_ret0, z_frame_ret1, z_frame_ret2, z_frame_dest
 .import z_frame_nlcl, z_frame_ofp, z_frame_osp, z_frame_argc, z_argc
@@ -31,6 +32,11 @@
 .export z_op_buffer_mode, z_op_output_stream, z_op_check_arg_count
 .export z_op_aread, z_aread_commit, z_line_buf
 .export z_print_zscii, z_decode_string_at
+.export z_obj_addr, z_obj_parent, z_obj_child, z_obj_sibling, z_capture_obj_name
+.exportzp z_name_capture
+.exportzp z_rng
+.export pad_name_buf, pad_name_len
+.export z_op_random
 
 .import z_tokenise
 .importzp tk_text, tk_parse, tk_dict, tk_flag
@@ -56,6 +62,14 @@ z_attr:     .res 1
 z_slot:     .res 1
 z_paddr:    .res 3          ; 24-bit unpacked packed-address
 z_stream3_depth: .res 1     ; output stream 3 nesting (0 = off)
+z_name_capture:  .res 1     ; nonzero → z_print_zscii writes pad_name_buf
+z_rng:           .res 2     ; PRNG state (never 0 once started)
+
+PAD_NAME_MAX = 24
+
+.segment "BSS"
+pad_name_buf: .res PAD_NAME_MAX
+pad_name_len: .res 1
 
 .segment "CODE"
 
@@ -767,6 +781,148 @@ z_stream3_cnt_hi:  .res STREAM3_MAX
 
 .segment "CODE"
 
+; VAR:7 random range -> result
+;  range > 0: uniform 1..range
+;  range < 0: seed to |range|, return 0
+;  range = 0: reseed from frame counter, return 0
+.proc z_op_random
+    lda z_ops_hi
+    bmi @seed_neg
+    ora z_ops_lo
+    beq @seed_time
+    ; positive range → 1..range
+    jsr z_rng_next
+    lda z_ops_lo
+    sta z_b
+    lda z_ops_hi
+    sta z_b+1
+    bne @mod16
+    ; Fast path: range fits in 8 bits (combat / dice)
+    lda z_a
+@mod8:
+    cmp z_b
+    bcc @mod8done
+    sbc z_b
+    jmp @mod8
+@mod8done:
+    sta z_a
+    lda #0
+    sta z_a+1
+    jmp @add1
+@mod16:
+    lda z_a+1
+    cmp z_b+1
+    bcc @moddone
+    bne @sub
+    lda z_a
+    cmp z_b
+    bcc @moddone
+@sub:
+    sec
+    lda z_a
+    sbc z_b
+    sta z_a
+    lda z_a+1
+    sbc z_b+1
+    sta z_a+1
+    jmp @mod16
+@moddone:
+@add1:
+    inc z_a
+    bne :+
+    inc z_a+1
+:
+    jmp z_do_store
+
+@seed_neg:
+    ; seed = -range (two's complement of ops)
+    lda #0
+    sec
+    sbc z_ops_lo
+    sta z_rng
+    lda #0
+    sbc z_ops_hi
+    sta z_rng+1
+    jmp @seed_done
+
+@seed_time:
+    lda frame_count
+    eor #$A5
+    sta z_rng
+    lda frame_count
+    asl a
+    eor #$5A
+    sta z_rng+1
+@seed_done:
+    lda z_rng
+    ora z_rng+1
+    bne @z
+    lda #1
+    sta z_rng
+@z:
+    lda #0
+    sta z_a
+    sta z_a+1
+    jmp z_do_store
+.endproc
+
+; Advance z_rng (xorshift16), return value in z_a.
+; Mixes frame_count so timing jitter (title wait, typing) diversifies sequences.
+.proc z_rng_next
+    lda z_rng
+    ora z_rng+1
+    bne @go
+    lda frame_count
+    eor #$31
+    sta z_rng
+    lda #$41
+    eor frame_count
+    sta z_rng+1
+@go:
+    ; Fold live timing into state before step (breaks lockstep script seeds a bit,
+    ; and makes human play less dependent on the first seed alone).
+    lda z_rng
+    eor frame_count
+    sta z_rng
+    ; x ^= x << 7
+    lda z_rng
+    sta z_tmpw
+    lda z_rng+1
+    sta z_tmpw+1
+    ldx #7
+@shl:
+    asl z_tmpw
+    rol z_tmpw+1
+    dex
+    bne @shl
+    lda z_rng
+    eor z_tmpw
+    sta z_rng
+    lda z_rng+1
+    eor z_tmpw+1
+    sta z_rng+1
+    ; x ^= x >> 9  (hi=0, lo = old_hi >> 1)
+    lda z_rng+1
+    lsr a
+    eor z_rng
+    sta z_rng
+    ; x ^= x << 8  (hi ^= lo)
+    lda z_rng
+    eor z_rng+1
+    sta z_rng+1
+    ; Never allow a zero state
+    lda z_rng
+    ora z_rng+1
+    bne @out
+    inc z_rng
+@out:
+    lda z_rng
+    sta z_a
+    lda z_rng+1
+    sta z_a+1
+    rts
+.endproc
+
 .proc z_op_new_line
     lda #13
     jmp z_print_zscii
@@ -1228,6 +1384,31 @@ z_stream3_cnt_hi:  .res STREAM3_MAX
 .endproc
 
 .proc z_print_zscii
+    ; Name capture (pad UI / helpers) — no screen, no stream 3.
+    ldx z_name_capture
+    beq @nostream
+    cmp #32
+    bcc @capdone
+    cmp #126
+    bcs @capdone
+    cmp #'a'
+    bcc @cap
+    cmp #'z'+1
+    bcs @cap
+    sec
+    sbc #$20
+@cap:
+    ldx pad_name_len
+    cpx #PAD_NAME_MAX-1
+    bcs @capdone
+    sta pad_name_buf,x
+    inx
+    stx pad_name_len
+    lda #0
+    sta pad_name_buf,x
+@capdone:
+    rts
+@nostream:
     ; Stream 3: divert to memory table (no screen output).
     ldx z_stream3_depth
     beq @screen
@@ -1433,6 +1614,92 @@ z_stream3_cnt_hi:  .res STREAM3_MAX
     lda z_prop_ptr+1
     adc #0
     sta z_prop_ptr+1
+    rts
+.endproc
+
+; Object # in z_ops_lo/hi → parent in z_a (no store).
+.proc z_obj_parent
+    jsr z_obj_addr
+    clc
+    lda z_addr
+    adc #6
+    sta z_addr
+    lda z_addr+1
+    adc #0
+    sta z_addr+1
+    jsr zmem_loadw
+    sta z_a
+    stx z_a+1
+    rts
+.endproc
+
+; Object # in z_ops_lo/hi → sibling in z_a (no store).
+.proc z_obj_sibling
+    jsr z_obj_addr
+    clc
+    lda z_addr
+    adc #8
+    sta z_addr
+    lda z_addr+1
+    adc #0
+    sta z_addr+1
+    jsr zmem_loadw
+    sta z_a
+    stx z_a+1
+    rts
+.endproc
+
+; Object # in z_ops_lo/hi → child in z_a (no store).
+.proc z_obj_child
+    jsr z_obj_addr
+    clc
+    lda z_addr
+    adc #10
+    sta z_addr
+    lda z_addr+1
+    adc #0
+    sta z_addr+1
+    jsr zmem_loadw
+    sta z_a
+    stx z_a+1
+    rts
+.endproc
+
+; Decode object short name into pad_name_buf (uppercase), pad_name_len set.
+; Object # in z_ops_lo/hi.
+.proc z_capture_obj_name
+    lda #0
+    sta pad_name_len
+    sta pad_name_buf
+    lda #1
+    sta z_name_capture
+    jsr z_obj_addr
+    clc
+    lda z_addr
+    adc #12
+    sta z_addr
+    lda z_addr+1
+    adc #0
+    sta z_addr+1
+    jsr zmem_loadw
+    sta z_str_a
+    stx z_str_a+1
+    lda #0
+    sta z_str_a+2
+    lda z_str_a
+    sta z_addr
+    lda z_str_a+1
+    sta z_addr+1
+    jsr zmem_loadb
+    inc z_str_a
+    bne :+
+    inc z_str_a+1
+:
+    lda #0
+    sta z_str_inline
+    jsr z_decode_string_at
+    lda #0
+    sta z_name_capture
     rts
 .endproc
 

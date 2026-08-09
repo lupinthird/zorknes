@@ -14,4 +14,4 @@
     .byte $00               ; timing NTSC
     .byte $00               ; vs system
     .byte $00               ; misc ROMs
-    .byte $00               ; default expansion
+    .byte $23               ; set expansion device to Family Basic Keyboard

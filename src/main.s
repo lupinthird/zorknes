@@ -5,16 +5,20 @@
 .import text_clear_tile0
 .import palette_apply_now
 .import read_keyboard, keyboard_poll_chars, sfx_boop
+.import read_pads
+.import palette_cycle
 .import text_put_char, text_flush_frame
 .import zmem_init, zmem_copy_dynamic
 .import zvm_boot, zvm_step
 .import z_aread_commit, z_line_buf
+.import pad_ui_poll
 .import title_show
 .import nmi, irq
 .importzp cursor_col, cursor_row, text_dirty, nt_resync, str_ptr, frame_count
 .importzp text_nmi_ok
 .importzp key_ready, key_ascii, keys_prev, kb_enable
 .importzp z_running, z_extop, z_pc, z_waiting_input, z_line_len
+.importzp pad1_pressed
 
 .export main, reset
 .exportzp theme_id, palette_dirty
@@ -148,6 +152,16 @@ Z_LINE_MAX = 64
     jsr read_keyboard
     cli
     jsr keyboard_poll_chars
+
+    ; Gamepad: SELECT = theme; word picker while aread waits
+    jsr read_pads
+    lda pad1_pressed
+    and #PAD_SELECT
+    beq @no_sel
+    jsr palette_cycle
+@no_sel:
+    jsr pad_ui_poll
+
     lda key_ready
     beq @vm
     lda key_ascii
@@ -205,7 +219,9 @@ Z_LINE_MAX = 64
 @stopped:
     ; Stopped and not waiting → trap/quit (show once)
     lda z_trap_shown
-    bne @loop
+    beq @show_stop
+    jmp @loop
+@show_stop:
     lda #1
     sta z_trap_shown
     jsr text_newline

@@ -8,6 +8,7 @@
 .export text_flush_all, text_flush_nmi, text_flush_frame, text_newline, text_home
 .export text_clear_tile0, text_set_cursor, text_set_cursor_z
 .export text_split_window, text_set_window, text_erase_window, text_erase_line
+.export text_poke_xy
 .exportzp cursor_col, cursor_row, text_dirty, str_ptr
 .exportzp win_split, win_cur
 .exportzp tile_off_lo, tile_off_hi, tile_value
@@ -446,6 +447,48 @@ nt_mirror:   .res 1024
 @done:
     jsr zmem_wram_text_off
     jsr begin_nt_resync
+    rts
+.endproc
+
+; A = glyph, X = column (0..31), Y = row (0..29).
+; Writes one nametable tile without moving the text cursor or wrapping.
+.proc text_poke_xy
+    cmp #'a'
+    bcc @ch
+    cmp #'z'+1
+    bcs @ch
+    sec
+    sbc #$20
+@ch:
+    sta tile_value
+    stx ppu_tmp                 ; column
+    tya
+    jsr row_to_tile_off
+    lda tile_off_lo
+    clc
+    adc ppu_tmp
+    sta tile_off_lo
+    bcc :+
+    inc tile_off_hi
+:
+    jsr zmem_wram_text_on
+    lda #<nt_mirror
+    clc
+    adc tile_off_lo
+    sta mirror_ptr
+    lda #>nt_mirror
+    adc tile_off_hi
+    sta mirror_ptr+1
+    ldy #0
+    lda tile_value
+    sta (mirror_ptr),y
+    jsr zmem_wram_text_off
+    lda nt_resync
+    bne @dirty
+    jsr vq_push
+@dirty:
+    lda #1
+    sta text_dirty
     rts
 .endproc
 

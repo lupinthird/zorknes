@@ -2,8 +2,10 @@
 
 .import wait_vblank
 .import read_keyboard, keyboard_poll_chars
+.import read_pads
 .importzp str_ptr, frame_count
 .importzp key_ready, key_ascii, kb_enable
+.importzp pad1_pressed
 .export title_show, title_nmi
 .exportzp title_active
 
@@ -71,6 +73,11 @@ title_hi:     .res 1
     cmp frame_count
     beq @wait
 
+    jsr read_pads
+    lda pad1_pressed
+    and #PAD_START
+    bne @dismiss
+
     jsr read_keyboard
     jsr keyboard_poll_chars
     lda key_ready
@@ -80,6 +87,7 @@ title_hi:     .res 1
     lda key_ascii
     cmp #$0D
     bne @frame
+@dismiss:
     lda #0
     sta title_active
     sta PPUMASK
