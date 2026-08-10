@@ -41,8 +41,17 @@ THEME_COUNT = 4
 
 SCREEN_COLS = 32          ; physical nametable width
 SCREEN_ROWS = 30          ; tile rows (excl. attribute table)
+; Story may use rows 0..STORY_ROWS-1; row 29 reserved for pad HUD / margin.
+STORY_ROWS  = 29
 ; Header width = physical width. Solid Gold's startup check (jl width 38)
 ; is patched to 32 in story/zork1.z5 so it accepts NES columns.
 Z_HDR_COLS  = SCREEN_COLS
 TEXT_COL0   = 0
 TEXT_ROW0   = 0           ; main top comes from win_split
+
+; SXROM 32K WRAM banks (MMC1 CHR0 bits). Dynamic uses 0–1 for Zork I.
+WRAM_BANK_TEXT  = 1       ; nametable mirror after dynamic (not in save banks)
+WRAM_BANK_SAVE0 = 2       ; battery save image (banks 2+3 = 16 KiB)
+WRAM_BANK_SAVE1 = 3
+; Zork I static_base $3B3E → bank1 offset $1B3E; mirror starts at $1B40.
+NT_MIRROR_OFF   = $1B40

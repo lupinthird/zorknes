@@ -68,8 +68,10 @@ z_dbg_d:      .res 1
 .export z_frame_ret0, z_frame_ret1, z_frame_ret2, z_frame_dest
 .export z_frame_nlcl, z_frame_ofp, z_frame_osp, z_frame_argc
 .export z_saved_lo, z_saved_hi, z_argc
+.export z_stack_lo, z_stack_hi
 .export z_trail_lo, z_trail_hi, z_trail_i
 .export z_dbg_a, z_dbg_b, z_dbg_c, z_dbg_d
+.export z_header_rst
 
 .segment "CODE"
 
@@ -274,42 +276,7 @@ z_dbg_d:      .res 1
     jsr zmem_loadb_phys
     sta z_obj_base
 
-    ; V5 header: screen geometry (matches physical SCREEN_COLS/ROWS).
-    ; story/zork1.z5 startup check patched to accept width 32.
-    lda #0
-    sta z_addr+1
-    lda #$20
-    sta z_addr
-    lda #SCREEN_ROWS
-    jsr zmem_storeb
-    lda #$21
-    sta z_addr
-    lda #Z_HDR_COLS
-    jsr zmem_storeb
-    lda #$22
-    sta z_addr
-    lda #Z_HDR_COLS         ; width in units (1x1 font)
-    jsr zmem_storeb
-    lda #$23
-    sta z_addr
-    lda #0
-    jsr zmem_storeb
-    lda #$24
-    sta z_addr
-    lda #SCREEN_ROWS
-    jsr zmem_storeb
-    lda #$25
-    sta z_addr
-    lda #0
-    jsr zmem_storeb
-    lda #$26
-    sta z_addr
-    lda #1                  ; font width
-    jsr zmem_storeb
-    lda #$27
-    sta z_addr
-    lda #1                  ; font height
-    jsr zmem_storeb
+    jsr z_header_rst
 
     lda #0
     sta z_sp
@@ -327,6 +294,44 @@ z_dbg_d:      .res 1
     lda #0
     sta z_call_has_store
     rts
+.endproc
+
+; Re-apply interpreter-owned header fields after restore (spec "Rst").
+.proc z_header_rst
+    lda #0
+    sta z_addr+1
+    lda #$20
+    sta z_addr
+    lda #STORY_ROWS
+    jsr zmem_storeb
+    lda #$21
+    sta z_addr
+    lda #Z_HDR_COLS
+    jsr zmem_storeb
+    lda #$22
+    sta z_addr
+    lda #Z_HDR_COLS
+    jsr zmem_storeb
+    lda #$23
+    sta z_addr
+    lda #0
+    jsr zmem_storeb
+    lda #$24
+    sta z_addr
+    lda #STORY_ROWS
+    jsr zmem_storeb
+    lda #$25
+    sta z_addr
+    lda #0
+    jsr zmem_storeb
+    lda #$26
+    sta z_addr
+    lda #1
+    jsr zmem_storeb
+    lda #$27
+    sta z_addr
+    lda #1
+    jmp zmem_storeb
 .endproc
 
 .proc z_trap

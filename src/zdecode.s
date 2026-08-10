@@ -21,6 +21,7 @@
 .import z_op_aread
 .import z_op_read_char
 .import z_op_random
+.import z_op_save, z_op_restore
 .importzp z_opcode, z_opcount, z_ops_lo, z_ops_hi, z_types, z_extop, z_i
 .importzp z_pc, z_tmpw, z_a, z_b, z_call_has_store
 .export z_decode_exec, z_do_store, z_branch_if
@@ -206,7 +207,7 @@ z_br0:    .res 1
     jsr z_parse_types_byte
     lda z_extop
     sta z_opcode
-    jmp z_unimpl
+    jmp z_disp_ext
 @n1:
     cmp #$E0
     bcc @n2
@@ -440,6 +441,16 @@ z_br0:    .res 1
     sta z_pc+2
     plp
     rts
+.endproc
+
+.proc z_disp_ext
+    lda z_extop
+    bne @1
+    jmp z_op_save
+@1: cmp #1
+    bne @u
+    jmp z_op_restore
+@u: jmp z_unimpl
 .endproc
 
 .proc z_unimpl

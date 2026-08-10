@@ -1,6 +1,7 @@
 .include "nes.inc"
 
 .import palette_cycle
+.importzp title_active
 .export read_keyboard, keyboard_poll_chars
 .exportzp keys_cur, keys_prev, key_ascii, key_ready, kb_enable
 
@@ -113,8 +114,18 @@ kb_enable:  .res 1
     ldx kb_row
     bcc @next
     cmp #$80
-    bne @char
+    bne @not_f1
     jsr palette_cycle
+    jmp @saveprev
+@not_f1:
+    cmp #$81                 ; F8 — erase save (title only)
+    bne @char
+    lda title_active
+    beq @saveprev
+    lda #$81
+    sta key_ascii
+    lda #1
+    sta key_ready
     jmp @saveprev
 @char:
     sta key_ascii
@@ -169,12 +180,15 @@ kb_enable:  .res 1
 
 .segment "RODATA"
 keymap:
-    .byte 0, $0D, '[', ']', 0, 0, $5C, 0
+    ; Packed order = $4017 bit1..bit4 per column (reverse of wiki bit4..1 list).
+    ; Row 0: F8 Return [ ] Kana RShift Yen Stop
+    .byte $81, $0D, '[', ']', 0, 0, $5C, 0
     .byte 0, '@', ':', ';', '_', '/', '-', '^'
     .byte 0, 'O', 'L', 'K', '.', ',', 'P', '0'
     .byte 0, 'I', 'U', 'J', 'M', 'N', '9', '8'
     .byte 0, 'Y', 'G', 'H', 'B', 'V', '7', '6'
     .byte 0, 'T', 'R', 'D', 'F', 'C', '5', '4'
     .byte 0, 'W', 'S', 'A', 'X', 'Z', 'E', '3'
+    ; Row 7: F1 Esc Q Ctrl LShift Grph 1 2
     .byte $80, 0, 'Q', 0, 0, 0, '1', '2'
     .byte 0, 0, 0, 0, 0, $20, $08, 0

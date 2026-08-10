@@ -94,9 +94,9 @@ Z_LINE_MAX = 64
 
 ; After title (or soft restart): clear screen, enable NMI, boot VM.
 .proc begin_play_session
+    jsr ppu_load_font           ; restore normal color0/1 glyphs after title
     jsr ppu_clear_nt
-    lda #THEME_GREEN
-    sta theme_id
+    ; Keep theme_id from title SELECT/F1 cycle; apply full BG+sprite pals.
     jsr palette_apply_now
     jsr restore_scroll_init     ; BG pattern back to $0000 (font)
     jsr text_clear

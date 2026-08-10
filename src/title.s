@@ -3,9 +3,13 @@
 .import wait_vblank
 .import read_keyboard, keyboard_poll_chars
 .import read_pads
+.import palette_cycle, palette_apply_title_text
+.import zsave_erase
+.import mmc1_set_prg
+.import font_chr
 .importzp str_ptr, frame_count
 .importzp key_ready, key_ascii, kb_enable
-.importzp pad1_pressed
+.importzp pad1, pad1_pressed
 .export title_show, title_nmi
 .exportzp title_active, input_mode
 
@@ -17,9 +21,18 @@ INPUT_MODE_PAD = 1
 PPUCTRL_LOGO = %10010000
 PPUCTRL_TEXT = %10000000
 
-; Delay from NMI (vblank start) to ~tile row 16. Tune if seam drifts.
-SPLIT_OUTER = 24
+; Timed CHR split (sprite-0 was softlocking). Bias late into row-16 gutter.
+SPLIT_OUTER = 25
 SPLIT_INNER = 138
+
+TILE_BLANK = $FF             ; color-0 blank in both banks (seam gutter)
+
+; ~5 seconds at 60 Hz
+ERASE_HOLD_FRAMES = 300
+
+; Keyboard: F1=$80 (palette), F8=$81 (erase save on title)
+KEY_F1 = $80
+KEY_F8 = $81
 
 .segment "ZEROPAGE"
 title_active: .res 1
@@ -28,13 +41,17 @@ title_row:    .res 1
 title_col:    .res 1
 title_lo:     .res 1
 title_hi:     .res 1
+erase_hold:   .res 2       ; 16-bit frame counter while A+B held
+chr_plane0:   .res 8       ; scratch for title paper-font convert
 
 .segment "CODE"
 
-; Called from NMI when title_active ≠ 0. Runs the mid-frame CHR split
-; with frame-locked timing (avoids wait_vblank drift from keyboard work).
+; Called from NMI when title_active ≠ 0.
 .proc title_nmi
     bit PPUSTATUS
+    ; Every frame (not only when dirty) so the timed split stays aligned.
+    jsr palette_apply_title_text
+
     lda #PPUCTRL_LOGO
     sta PPUCTRL
     lda #0
@@ -58,9 +75,17 @@ title_hi:     .res 1
 ; CHR: font @ $0000, logo @ $1000. Leaves rendering off, NMI off.
 .proc title_show
     bit PPUSTATUS
+    jsr title_make_paper_font
     jsr title_upload_logo
+    jsr title_prepare_split_chr
+    jsr title_fill_paper
     jsr title_write_messages
     jsr title_setup_palettes
+    jsr palette_apply_title_text
+
+    lda #0
+    sta erase_hold
+    sta erase_hold+1
 
     lda #1
     sta kb_enable
@@ -79,6 +104,36 @@ title_hi:     .res 1
     beq @wait
 
     jsr read_pads
+
+    ; SELECT → cycle game theme; title NMI applies it to palette 2.
+    lda pad1_pressed
+    and #PAD_SELECT
+    beq @no_sel
+    jsr palette_cycle
+@no_sel:
+
+    ; Hold A+B for ~5s to erase battery save slot
+    lda pad1
+    and #(PAD_A | PAD_B)
+    cmp #(PAD_A | PAD_B)
+    bne @ab_reset
+    inc erase_hold
+    bne @ab_chk
+    inc erase_hold+1
+@ab_chk:
+    lda erase_hold
+    cmp #<ERASE_HOLD_FRAMES
+    lda erase_hold+1
+    sbc #>ERASE_HOLD_FRAMES
+    bcc @ab_done
+    jsr title_do_erase
+    jmp @ab_done
+@ab_reset:
+    lda #0
+    sta erase_hold
+    sta erase_hold+1
+@ab_done:
+
     lda pad1_pressed
     and #PAD_START
     beq @try_kb
@@ -94,6 +149,11 @@ title_hi:     .res 1
     lda #0
     sta key_ready
     lda key_ascii
+    cmp #KEY_F8
+    bne @not_f8
+    jsr title_do_erase
+    jmp @frame
+@not_f8:
     cmp #$0D
     bne @frame
     lda #INPUT_MODE_KB
@@ -105,6 +165,138 @@ title_hi:     .res 1
     sta kb_enable
     sta PPUCTRL              ; NMI off until main re-enables
     jsr wait_vblank
+    rts
+.endproc
+
+.proc title_do_erase
+    lda #0
+    sta erase_hold
+    sta erase_hold+1
+    sta PPUMASK
+    jsr wait_vblank
+    jsr zsave_erase
+    lda #<msg_erased
+    sta str_ptr
+    lda #>msg_erased
+    sta str_ptr+1
+    ldx #22
+    ldy #1
+    jsr title_put_str_at
+    jsr wait_vblank
+    lda #PPUCTRL_LOGO
+    sta PPUCTRL
+    lda #PPUMASK_ON
+    sta PPUMASK
+    rts
+.endproc
+
+.proc title_make_paper_font
+    ; Reload BG font with color0→color2 so “empty” pixels use palette
+    ; color 2 (paper) instead of universal $3F00. Ink stays color 1.
+    ; plane1_new = plane1 | ~plane0. Logo CHR @ $1000 untouched.
+    lda #6
+    jsr mmc1_set_prg
+    bit PPUSTATUS
+    lda #$00
+    sta PPUADDR
+    sta PPUADDR
+    lda #<font_chr
+    sta str_ptr
+    lda #>font_chr
+    sta str_ptr+1
+    lda #0
+    sta title_row               ; 256 tiles
+@tile:
+    ldy #0
+@p0:
+    lda (str_ptr),y
+    sta chr_plane0,y
+    sta PPUDATA
+    iny
+    cpy #8
+    bne @p0
+    ldy #0
+@p1:
+    tya
+    clc
+    adc #8
+    tay
+    lda (str_ptr),y
+    sta title_lo
+    tya
+    sec
+    sbc #8
+    tay
+    lda chr_plane0,y
+    eor #$FF
+    ora title_lo
+    sta PPUDATA
+    iny
+    cpy #8
+    bne @p1
+    clc
+    lda str_ptr
+    adc #16
+    sta str_ptr
+    bcc @nc
+    inc str_ptr+1
+@nc:
+    inc title_row
+    bne @tile
+    lda #0
+    jsr mmc1_set_prg
+    rts
+.endproc
+
+; Tile row 16: blank gutter (hides CHR-switch jitter). Rows 17–29: paper.
+.proc title_fill_paper
+    bit PPUSTATUS
+    lda #$22
+    sta PPUADDR
+    lda #$00
+    sta PPUADDR
+    lda #TILE_BLANK
+    ldy #32
+@gutter:
+    sta PPUDATA
+    dey
+    bne @gutter
+    lda #' '
+    ldx #13                     ; rows 17–29
+@row:
+    ldy #32
+@col:
+    sta PPUDATA
+    dey
+    bne @col
+    dex
+    bne @row
+    rts
+.endproc
+
+; Blank tile $FF in both CHR banks (row-16 gutter hides timed-split jitter).
+.proc title_prepare_split_chr
+    bit PPUSTATUS
+    lda #$0F
+    sta PPUADDR
+    lda #$F0
+    sta PPUADDR
+    ldx #16
+    lda #0
+@font:
+    sta PPUDATA
+    dex
+    bne @font
+    lda #$1F
+    sta PPUADDR
+    lda #$F0
+    sta PPUADDR
+    ldx #16
+    lda #0
+@logo:
+    sta PPUDATA
+    dex
+    bne @logo
     rts
 .endproc
 
@@ -144,7 +336,15 @@ title_hi:     .res 1
     lda #>msg_f1
     sta str_ptr+1
     ldx #20
-    ldy #3
+    ldy #2
+    jsr title_put_str_at
+
+    lda #<msg_erase
+    sta str_ptr
+    lda #>msg_erase
+    sta str_ptr+1
+    ldx #22
+    ldy #1
     jsr title_put_str_at
 
     lda #<msg_copy
@@ -206,6 +406,7 @@ title_hi:     .res 1
     sta PPUADDR
     lda #$00
     sta PPUADDR
+    ; BG pal 0 — logo (fixed)
     lda #$0F
     sta PPUDATA
     lda #$00
@@ -214,6 +415,7 @@ title_hi:     .res 1
     sta PPUDATA
     lda #$30
     sta PPUDATA
+    ; BG pal 1 — logo accents (door / gold)
     lda #$0F
     sta PPUDATA
     lda #$17
@@ -222,15 +424,15 @@ title_hi:     .res 1
     sta PPUDATA
     lda #$37
     sta PPUDATA
-    ; BG pal 2 — title text (white/gray swapped vs pal 0)
+    ; BG pal 2 — title text: c0 unused, c1 ink, c2 paper (theme fills next)
     lda #$0F
-    sta PPUDATA             ; $3F08 backdrop mirror
-    lda #$30
-    sta PPUDATA             ; was $00 in pal 0
-    lda #$10
     sta PPUDATA
-    lda #$00
-    sta PPUDATA             ; was $30 in pal 0
+    lda #$2A
+    sta PPUDATA
+    lda #$0F
+    sta PPUDATA
+    lda #$0F
+    sta PPUDATA
     ; BG pal 3 unused
     ldx #4
     lda #$0F
@@ -288,6 +490,10 @@ msg_kb:
     .byte "ENTER=KEYBOARD   START=GAMEPAD", 0
 msg_f1:
     .byte "F1 / SELECT = COLOR SCHEME", 0
+msg_erase:
+    .byte "F8 / HOLD A+B 5S = ERASE SAVE", 0
+msg_erased:
+    .byte "SAVE DATA ERASED              ", 0
 msg_copy:
     .byte "github.com/lupinthird/zorknes", 0
 

@@ -4,9 +4,8 @@
 .export zmem_init, zmem_loadb, zmem_storeb, zmem_loadw, zmem_storew
 .export zmem_copy_dynamic, zmem_loadb_phys
 .export zmem_wram_text_on, zmem_wram_text_off
+.export zmem_set_wram
 .exportzp z_addr, z_static_base, z_himem, z_pc_init, z_phys, z_wram_idx
-
-WRAM_BANK_TEXT = 2
 
 .segment "ZEROPAGE"
 z_addr:         .res 2
@@ -32,7 +31,11 @@ z_wram_text_depth: .res 1   ; nest count (NMI flush vs main text)
     jmp mmc1_set_wram
 .endproc
 
-; Select WRAM bank 2 for nt_mirror. Nest-safe: NMI text_flush may
+.proc zmem_set_wram
+    jmp set_wram
+.endproc
+
+; Select WRAM bank for nt_mirror. Nest-safe: NMI text_flush may
 ; re-enter while main is already in a text_on region.
 .proc zmem_wram_text_on
     lda z_wram_text_depth

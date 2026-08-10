@@ -8,7 +8,7 @@
 .export text_flush_all, text_flush_nmi, text_flush_frame, text_newline, text_home
 .export text_clear_tile0, text_set_cursor, text_set_cursor_z
 .export text_split_window, text_set_window, text_erase_window, text_erase_line
-.export text_poke_xy
+.export text_poke_xy, text_capture_vram
 .exportzp cursor_col, cursor_row, text_dirty, str_ptr
 .exportzp win_split, win_cur
 .exportzp tile_off_lo, tile_off_hi, tile_value
@@ -58,6 +58,10 @@ vq_hi:        .res VQ_MAX
 vq_tile:      .res VQ_MAX
 
 .segment "WRAM"
+; Mapped when WRAM bank 1 is selected (WRAM_BANK_TEXT).
+; Lives after the live dynamic image in this bank (zaddrs $2000–$3B3D).
+; Must NOT share banks 2–3 with the battery save slot.
+.res NT_MIRROR_OFF
 nt_mirror:   .res 1024
 
 .segment "CODE"
@@ -161,6 +165,58 @@ nt_mirror:   .res 1024
     rts
 .endproc
 
+; Copy live PPU nametable → WRAM mirror (after SAVE overwrites bank 2).
+.proc text_capture_vram
+    php
+    sei
+    lda #0
+    sta PPUMASK
+    bit PPUSTATUS
+    jsr zmem_wram_text_on
+    lda #$20
+    sta PPUADDR
+    lda #$00
+    sta PPUADDR
+    lda PPUDATA                 ; drop buffered read
+    ldx #0
+@p0:
+    lda PPUDATA
+    sta nt_mirror,x
+    inx
+    bne @p0
+@p1:
+    lda PPUDATA
+    sta nt_mirror+$100,x
+    inx
+    bne @p1
+@p2:
+    lda PPUDATA
+    sta nt_mirror+$200,x
+    inx
+    bne @p2
+@p3:
+    lda PPUDATA
+    sta nt_mirror+$300,x
+    inx
+    bne @p3
+    jsr zmem_wram_text_off
+    lda #0
+    sta vq_head
+    sta vq_tail
+    sta nt_resync
+    sta text_dirty
+    bit PPUSTATUS
+    lda #PPUCTRL_NMI
+    sta PPUCTRL
+    lda #0
+    sta PPUSCROLL
+    sta PPUSCROLL
+    lda #PPUMASK_ON
+    sta PPUMASK
+    plp
+    rts
+.endproc
+
 ; Start a progressive mirror→PPU copy in NMI (no screen blanking).
 .proc begin_nt_resync
     lda #0
@@ -202,9 +258,9 @@ nt_mirror:   .res 1024
 @cok:
     sta cursor_col
     txa
-    cmp #SCREEN_ROWS
+    cmp #STORY_ROWS
     bcc @rok
-    lda #SCREEN_ROWS-1
+    lda #STORY_ROWS-1
 @rok:
     sta cursor_row
     ; Keep the active window's saved cursor in sync
@@ -296,10 +352,10 @@ nt_mirror:   .res 1024
     bne @upper
     ; main window: scroll when past bottom
     lda cursor_row
-    cmp #SCREEN_ROWS
+    cmp #STORY_ROWS
     bcc @ok
     jsr text_scroll_main
-    lda #SCREEN_ROWS-1
+    lda #STORY_ROWS-1
     sta cursor_row
 @ok:
     lda cursor_col
@@ -325,14 +381,14 @@ nt_mirror:   .res 1024
     rts
 .endproc
 
-; Scroll main window (rows win_split..29) up one line; clear bottom row.
+; Scroll main window (rows win_split..STORY_ROWS-1) up one line; clear bottom story row.
 .proc text_scroll_main
     jsr zmem_wram_text_on
     lda win_split
     sta scroll_tmp
 @rows:
     lda scroll_tmp
-    cmp #SCREEN_ROWS-1
+    cmp #STORY_ROWS-1
     bcs @blank
     ; dest = row*32, src = dest+32
     lda scroll_tmp
@@ -362,8 +418,8 @@ nt_mirror:   .res 1024
     inc scroll_tmp
     jmp @rows
 @blank:
-    ; clear last row (29)
-    lda #SCREEN_ROWS-1
+    ; clear last story row (STORY_ROWS-1); leave HUD row alone
+    lda #STORY_ROWS-1
     jsr row_to_tile_off
     lda #<nt_mirror
     clc
@@ -502,9 +558,9 @@ nt_mirror:   .res 1024
     bne @nz
     lda #1
 @nz:
-    cmp #SCREEN_ROWS
+    cmp #STORY_ROWS
     bcc @ok
-    lda #SCREEN_ROWS-1
+    lda #STORY_ROWS-1
 @ok:
     sta ppu_tmp                 ; requested split
     cmp win_split
@@ -608,7 +664,7 @@ nt_mirror:   .res 1024
     beq @upper
     ; main
     lda win_split
-    ldx #SCREEN_ROWS-1
+    ldx #STORY_ROWS-1
     jsr text_erase_rows
     lda #0
     sta win0_col
@@ -644,7 +700,7 @@ nt_mirror:   .res 1024
     sta win_split
 @all:
     lda #0
-    ldx #SCREEN_ROWS-1
+    ldx #STORY_ROWS-1
     jsr text_erase_rows
     lda #0
     sta win_cur
@@ -702,13 +758,20 @@ nt_mirror:   .res 1024
 ; NMI resync — never a multi-frame PPUMASK blank copy.
 .proc store_mirror_tile
     sta tile_value
-    ; Main window must never draw into the status rows
+    ; Main window must never draw into the status rows or HUD row
     lda win_cur
     bne @pos
     lda cursor_row
     cmp win_split
-    bcs @pos
+    bcs @in_main
     lda win_split
+    sta cursor_row
+    sta win0_row
+@in_main:
+    lda cursor_row
+    cmp #STORY_ROWS
+    bcc @pos
+    lda #STORY_ROWS-1
     sta cursor_row
     sta win0_row
 @pos:

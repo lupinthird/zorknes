@@ -2,6 +2,7 @@
 
 .importzp theme_id, palette_dirty
 .export palette_apply_now, palette_request_apply, palette_cycle
+.export palette_apply_title_text
 .export theme_tables, theme_green
 
 .segment "CODE"
@@ -57,6 +58,38 @@
     iny
     dex
     bne @spr
+    lda #0
+    sta palette_dirty
+    rts
+.endproc
+
+; Title screen: BG palette 2 only. Font uses color1=ink, color2=paper
+; (color0 avoided so paper is not tied to universal $3F00).
+; $3F09 = theme ink, $3F0A = theme backdrop. Call during vblank.
+.proc palette_apply_title_text
+    lda theme_id
+    asl a
+    asl a
+    asl a
+    asl a
+    tay
+    bit PPUSTATUS
+    lda #$3F
+    sta PPUADDR
+    lda #$08
+    sta PPUADDR
+    lda #$0F                ; color0 unused by paper font
+    sta PPUDATA
+    lda theme_green+1,y     ; ink
+    sta PPUDATA
+    lda theme_green,y       ; paper (= theme backdrop)
+    sta PPUDATA
+    lda #$0F
+    sta PPUDATA
+    ; Restore scroll latch after palette poke
+    lda #0
+    sta PPUSCROLL
+    sta PPUSCROLL
     lda #0
     sta palette_dirty
     rts

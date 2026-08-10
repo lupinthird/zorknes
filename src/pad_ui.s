@@ -11,11 +11,11 @@
 .import z_obj_addr, z_obj_parent, z_obj_child, z_obj_sibling, z_capture_obj_name
 .import z_get_var
 .import pad_name_buf, pad_name_len
-.import zmem_loadb
+.import zmem_loadb, zmem_loadw
 .import sfx_boop
 .importzp pad1_pressed
 .importzp z_waiting_input, z_line_len, z_ops_lo, z_ops_hi, z_a
-.importzp z_addr
+.importzp z_addr, z_tmpw
 .importzp cursor_col, cursor_row, win_cur
 .importzp input_mode
 
@@ -425,6 +425,8 @@ ATTR_INVISIBLE  = 23
 ATTR_SURFACEBIT = 27
 ATTR_OPENBIT    = 28
 ATTR_TRANSBIT   = 29
+; Solid Gold room "GLOBAL" property — local-globals (WINDOW, HOUSE, …).
+PROP_GLOBAL     = 37
 
 .proc pad_rebuild_nouns
     lda #0
@@ -471,6 +473,188 @@ ATTR_TRANSBIT   = 29
     lda z_a+1
     sta z_ops_hi
     jsr pad_walk_visible
+@ret:
+    ; Scenery often lives in the room GLOBAL property, not as children.
+    jsr pad_add_room_globals
+    rts
+.endproc
+
+; Add objects listed in HERE's GLOBAL property (Infocom local-globals).
+.proc pad_add_room_globals
+    lda pad_room
+    ora pad_room+1
+    bne @go
+    rts
+@go:
+    lda pad_room
+    sta z_ops_lo
+    lda pad_room+1
+    sta z_ops_hi
+    jsr z_obj_addr
+    clc
+    lda z_addr
+    adc #12
+    sta z_addr
+    lda z_addr+1
+    adc #0
+    sta z_addr+1
+    jsr zmem_loadw              ; A=lo X=hi → property table
+    sta pad_word_lo
+    stx pad_word_hi
+    ; Skip short name: text-length byte (words) then 2*len bytes
+    sta z_addr
+    stx z_addr+1
+    jsr zmem_loadb
+    asl a
+    sta pad_tmp
+    clc
+    lda pad_word_lo
+    adc #1
+    sta pad_word_lo
+    lda pad_word_hi
+    adc #0
+    sta pad_word_hi
+    clc
+    lda pad_word_lo
+    adc pad_tmp
+    sta pad_word_lo
+    lda pad_word_hi
+    adc #0
+    sta pad_word_hi
+@scan:
+    lda pad_word_lo
+    sta z_addr
+    lda pad_word_hi
+    sta z_addr+1
+    jsr zmem_loadb
+    sta pad_tmp                 ; size byte
+    bne @scango
+    rts
+@scango:
+    lda pad_tmp
+    and #$80
+    bne @long
+    ; Short form: num in bits 5-0, len 1/2 from bit6
+    lda pad_tmp
+    and #$3F
+    cmp #PROP_GLOBAL
+    bne @skip_s
+    lda pad_tmp
+    and #$40
+    beq @s1
+    lda #2
+    bne @short_data
+@s1: lda #1
+@short_data:
+    sta pad_tmp                 ; length
+    clc
+    lda pad_word_lo
+    adc #1
+    sta pad_walk
+    lda pad_word_hi
+    adc #0
+    sta pad_walk+1
+    jmp @add_list
+@skip_s:
+    lda pad_tmp
+    and #$40
+    beq @ss1
+    lda #2
+    bne @sadv
+@ss1:
+    lda #1
+@sadv:
+    clc
+    adc #1                      ; size byte + data
+    jmp @advance
+@long:
+    lda pad_tmp
+    and #$3F
+    cmp #PROP_GLOBAL
+    bne @skip_l
+    ; Second size byte = length
+    clc
+    lda pad_word_lo
+    adc #1
+    sta z_addr
+    lda pad_word_hi
+    adc #0
+    sta z_addr+1
+    jsr zmem_loadb
+    and #$3F
+    bne @llen
+    lda #64
+@llen:
+    sta pad_tmp
+    clc
+    lda pad_word_lo
+    adc #2
+    sta pad_walk
+    lda pad_word_hi
+    adc #0
+    sta pad_walk+1
+    jmp @add_list
+@skip_l:
+    clc
+    lda pad_word_lo
+    adc #1
+    sta z_addr
+    lda pad_word_hi
+    adc #0
+    sta z_addr+1
+    jsr zmem_loadb
+    and #$3F
+    bne @ladv
+    lda #64
+@ladv:
+    clc
+    adc #2                      ; two size bytes + data
+@advance:
+    clc
+    adc pad_word_lo
+    sta pad_word_lo
+    lda pad_word_hi
+    adc #0
+    sta pad_word_hi
+    jmp @scan
+
+; pad_walk → data, pad_tmp → byte length (words of object ids)
+@add_list:
+@aloop:
+    lda pad_tmp
+    beq @ret
+    cmp #2
+    bcc @ret                    ; need at least one word
+    lda pad_walk
+    sta z_addr
+    lda pad_walk+1
+    sta z_addr+1
+    jsr zmem_loadw              ; A=lo X=hi object number
+    sta z_ops_lo
+    stx z_ops_hi
+    ; Skip 0 and the Infocom trailing "1" sentinel often seen in GLOBAL lists
+    ora z_ops_hi
+    beq @anext
+    lda z_ops_lo
+    cmp #1
+    bne @aok
+    lda z_ops_hi
+    beq @anext
+@aok:
+    jsr pad_try_add_obj
+@anext:
+    clc
+    lda pad_walk
+    adc #2
+    sta pad_walk
+    lda pad_walk+1
+    adc #0
+    sta pad_walk+1
+    lda pad_tmp
+    sec
+    sbc #2
+    sta pad_tmp
+    jmp @aloop
 @ret:
     rts
 .endproc
