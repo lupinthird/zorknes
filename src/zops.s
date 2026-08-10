@@ -34,6 +34,7 @@
 .export z_op_aread, z_aread_commit, z_line_buf
 .export z_op_read_char, z_read_char_commit
 .export z_print_zscii, z_decode_string_at
+.export z_word_flush, z_word_reset
 .export z_obj_addr, z_obj_parent, z_obj_child, z_obj_sibling, z_capture_obj_name
 .exportzp z_name_capture
 .exportzp z_rng
@@ -790,6 +791,8 @@ z_stream3_addr_lo: .res STREAM3_MAX
 z_stream3_addr_hi: .res STREAM3_MAX
 z_stream3_cnt_lo:  .res STREAM3_MAX
 z_stream3_cnt_hi:  .res STREAM3_MAX
+; word_buf aliases z_line_buf (flushed before aread fills the line buffer)
+word_len:          .res 1
 
 .segment "CODE"
 
@@ -958,6 +961,7 @@ z_stream3_cnt_hi:  .res STREAM3_MAX
     lda z_ops_hi+1
     sta z_read_parse+1
 @pause:
+    jsr z_word_flush
     lda #0
     sta z_line_len
     lda #ZWAIT_AREAD
@@ -1060,6 +1064,7 @@ z_stream3_cnt_hi:  .res STREAM3_MAX
 ; VAR:22 read_char — pause for one ZSCII key (HINT menus, etc.).
 ; time/routine timed input not implemented (treated as wait forever).
 .proc z_op_read_char
+    jsr z_word_flush
     lda #ZWAIT_CHAR
     sta z_waiting_input
     lda #0
@@ -1450,9 +1455,9 @@ z_stream3_cnt_hi:  .res STREAM3_MAX
     cmp #13
     beq @st3
     cmp #32
-    bcc @done
+    bcc @st3done
     cmp #126
-    bcs @done
+    bcs @st3done
 @st3:
     sta z_ch
     txa
@@ -1478,27 +1483,106 @@ z_stream3_cnt_hi:  .res STREAM3_MAX
     tax
     ; count++
     inc z_stream3_cnt_lo,x
-    bne @done
+    bne @st3done
     inc z_stream3_cnt_hi,x
+@st3done:
     rts
 @screen:
+    ; Upper/status window: immediate put (clip in text_put_char).
+    ldx win_cur
+    bne @immediate
+
     cmp #13
-    bne @n
+    bne @not_cr
+    jsr z_word_flush
     jmp text_newline
-@n:
+@not_cr:
+    cmp #' '
+    bne @not_sp
+    jsr z_word_flush
+    lda cursor_col
+    beq @scrdone              ; no leading space after wrap
+    cmp #SCREEN_COLS-1
+    bcc @sp_put
+    ; Trailing space would only force a wrap — newline instead.
+    jmp text_newline
+@sp_put:
+    lda #' '
+    jmp text_put_char
+@not_sp:
     cmp #32
-    bcc @done
+    bcc @scrdone
     cmp #126
-    bcs @done
+    bcs @scrdone
     cmp #'a'
-    bcc @put
+    bcc @accum
     cmp #'z'+1
-    bcs @put
+    bcs @accum
     sec
     sbc #$20
-@put:
+@accum:
+    ldx word_len
+    sta z_line_buf,x
+    inx
+    stx word_len
+    cpx #SCREEN_COLS
+    bcc @scrdone
+    jmp z_word_flush          ; hard-break overlong token
+
+@immediate:
+    cmp #13
+    bne @imm_n
+    jmp text_newline
+@imm_n:
+    cmp #32
+    bcc @scrdone
+    cmp #126
+    bcs @scrdone
+    cmp #'a'
+    bcc @imm_put
+    cmp #'z'+1
+    bcs @imm_put
+    sec
+    sbc #$20
+@imm_put:
     jmp text_put_char
-@done:
+@scrdone:
+    rts
+.endproc
+
+; Emit buffered main-window word; wrap first if it won't fit on this line.
+.proc z_word_flush
+    lda word_len
+    beq @ret
+    lda cursor_col
+    beq @emit
+    clc
+    adc word_len
+    cmp #SCREEN_COLS+1        ; col+len > 32 → need newline
+    bcc @emit
+    jsr text_newline
+@emit:
+    ldx #0
+@loop:
+    cpx word_len
+    beq @clear
+    lda z_line_buf,x
+    stx z_ch                  ; text_put_char clobbers X
+    jsr text_put_char
+    ldx z_ch
+    inx
+    bne @loop
+@clear:
+    lda #0
+    sta word_len
+@ret:
+    rts
+.endproc
+
+; Discard pending word (screen clear / new session).
+.proc z_word_reset
+    lda #0
+    sta word_len
     rts
 .endproc
 

@@ -3,6 +3,7 @@
 .import zmem_wram_text_on, zmem_wram_text_off
 .import mmc1_set_prg
 .import font_chr
+.import z_word_reset
 .importzp frame_count
 .export ppu_clear_nt, ppu_load_font, text_clear, text_put_str, text_put_char
 .export text_flush_all, text_flush_nmi, text_flush_frame, text_newline, text_home
@@ -135,6 +136,7 @@ nt_mirror:   .res 1024
 .endproc
 
 .proc text_clear
+    jsr z_word_reset
     lda #0
     sta win_split
     sta win_cur
