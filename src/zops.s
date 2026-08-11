@@ -47,6 +47,7 @@
 
 .import zmem_loadb, zmem_storeb, zmem_loadw, zmem_storew, zmem_loadb_phys
 .importzp z_addr, z_phys
+.import oam
 
 Z_LINE_MAX = 64
 
@@ -791,8 +792,12 @@ z_stream3_addr_lo: .res STREAM3_MAX
 z_stream3_addr_hi: .res STREAM3_MAX
 z_stream3_cnt_lo:  .res STREAM3_MAX
 z_stream3_cnt_hi:  .res STREAM3_MAX
-; word_buf aliases z_line_buf (flushed before aread fills the line buffer)
 word_len:          .res 1
+
+; Word-wrap scratch: 32 bytes in unused OAM ($0280). Gameplay keeps sprites
+; off; title only uses sprite 0 at $0200. Must NOT alias z_line_buf — print
+; during aread_commit/tokenise races would corrupt the typed command.
+WORD_BUF = oam + $80
 
 .segment "CODE"
 
@@ -1514,15 +1519,10 @@ word_len:          .res 1
     bcc @scrdone
     cmp #126
     bcs @scrdone
-    cmp #'a'
-    bcc @accum
-    cmp #'z'+1
-    bcs @accum
-    sec
-    sbc #$20
+    ; Keep mixed case — font has a–z; A0/A1 alphabets already differ.
 @accum:
     ldx word_len
-    sta z_line_buf,x
+    sta WORD_BUF,x
     inx
     stx word_len
     cpx #SCREEN_COLS
@@ -1538,12 +1538,6 @@ word_len:          .res 1
     bcc @scrdone
     cmp #126
     bcs @scrdone
-    cmp #'a'
-    bcc @imm_put
-    cmp #'z'+1
-    bcs @imm_put
-    sec
-    sbc #$20
 @imm_put:
     jmp text_put_char
 @scrdone:
@@ -1566,7 +1560,7 @@ word_len:          .res 1
 @loop:
     cpx word_len
     beq @clear
-    lda z_line_buf,x
+    lda WORD_BUF,x
     stx z_ch                  ; text_put_char clobbers X
     jsr text_put_char
     ldx z_ch
@@ -1783,7 +1777,7 @@ word_len:          .res 1
     rts
 .endproc
 
-; Decode object short name into pad_name_buf (uppercase), pad_name_len set.
+; Decode object short name into pad_name_buf (forced uppercase for pad match).
 ; Object # in z_ops_lo/hi.
 .proc z_capture_obj_name
     lda #0
@@ -2807,6 +2801,9 @@ a0tab:
     .byte "abcdefghijklmnopqrstuvwxyz"
 a1tab:
     .byte "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-; index = zchar-6; [0]=escape (unused), [1]=newline, [2..]=symbols
+; index = zchar-6; [0]=escape (unused), [1]=newline, [2..]=A2 symbols.
+; Z-spec chart "^" at zchar 7 marks newline (not ASCII caret).
+; Printable A2 for zchars 8..31: 0123456789.,!?_#'"/\-:()
+; Use $5C for backslash — ca65 string \\ escaping is easy to get wrong.
 a2tab:
-    .byte $00,$0D,"0123456789.,!?_#'",'"',"/\\-:()"
+    .byte $00,$0D,"0123456789.,!?_#'",'"',"/",$5C,"-:()"

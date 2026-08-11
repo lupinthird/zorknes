@@ -298,8 +298,15 @@ tk_cmp:       .res 1
     bcc @ok
     rts
 @ok:
+    ; Encode clobbers tk_pos (rewinds to wstart, advances ≤9). Save the
+    ; scan cursor past the full word so leftovers like ER in SCREWDRIVER
+    ; are not re-tokenised as a second word.
+    lda tk_pos
+    pha
     jsr tk_encode
     jsr tk_lookup
+    pla
+    sta tk_pos
     ; write parse entry at parse+2+4*nwords
     lda tk_nwords
     asl a
@@ -531,9 +538,9 @@ tk_cmp:       .res 1
 .endproc
 
 .segment "RODATA"
-; A2 printable following Infocom (zchar 8+)
+; A2 printable for encode (zchar = index+8). Matches a2tab[2..].
 a2enc:
     .byte "0123456789.,!?_#'"
     .byte '"'
-    .byte "/\\-:()"
+    .byte "/", $5C, "-:()"
 a2enc_len = * - a2enc

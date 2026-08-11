@@ -897,13 +897,14 @@ PROP_GLOBAL     = 37
 
 .segment "RODATA"
 
-VERB_COUNT = 41
+VERB_COUNT = 43
 verb_ptrs:
     .word v_look, v_examine, v_take, v_drop, v_put, v_open, v_close, v_read
     .word v_attack, v_kill, v_inv, v_wait, v_again, v_enter, v_exit, v_climb, v_turn
     .word v_move, v_pull, v_push, v_give, v_throw, v_tie, v_untie, v_light
     .word v_extinguish, v_eat, v_drink, v_fill, v_empty, v_say, v_ask, v_tell
-    .word v_diagnose, v_score, v_save, v_restore, v_restart, v_quit, v_wave, v_break
+    .word v_diagnose, v_score, v_save, v_restore, v_restart, v_quit
+    .word v_verbose, v_brief, v_wave, v_break
 
 v_look: .byte "LOOK", 0
 v_examine: .byte "EXAMINE", 0
@@ -944,6 +945,8 @@ v_save: .byte "SAVE", 0
 v_restore: .byte "RESTORE", 0
 v_restart: .byte "RESTART", 0
 v_quit: .byte "QUIT", 0
+v_verbose: .byte "VERBOSE", 0
+v_brief: .byte "BRIEF", 0
 v_wave: .byte "WAVE", 0
 v_break: .byte "BREAK", 0
 

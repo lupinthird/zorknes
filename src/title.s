@@ -487,13 +487,13 @@ chr_plane0:   .res 8       ; scratch for title paper-font convert
 
 .segment "RODATA"
 msg_kb:
-    .byte "ENTER=KEYBOARD   START=GAMEPAD", 0
+    .byte "Enter=Keyboard   Start=Gamepad", 0
 msg_f1:
-    .byte "F1 / SELECT = COLOR SCHEME", 0
+    .byte "F1 / Select = Color Scheme", 0
 msg_erase:
-    .byte "F8 / HOLD A+B 5S = ERASE SAVE", 0
+    .byte "F8 / Hold A+B 5s = Erase Save", 0
 msg_erased:
-    .byte "SAVE DATA ERASED              ", 0
+    .byte "Save Data Erased.             ", 0
 msg_copy:
     .byte "github.com/lupinthird/zorknes", 0
 

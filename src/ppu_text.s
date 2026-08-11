@@ -511,13 +511,6 @@ nt_mirror:   .res 1024
 ; A = glyph, X = column (0..31), Y = row (0..29).
 ; Writes one nametable tile without moving the text cursor or wrapping.
 .proc text_poke_xy
-    cmp #'a'
-    bcc @ch
-    cmp #'z'+1
-    bcs @ch
-    sec
-    sbc #$20
-@ch:
     sta tile_value
     stx ppu_tmp                 ; column
     tya
@@ -815,12 +808,7 @@ nt_mirror:   .res 1024
     beq @bs
     cmp #$20
     bcc @done
-    cmp #'a'
-    bcc @store
-    cmp #'z'+1
-    bcs @store
-    sec
-    sbc #$20
+    ; Pass through mixed case (CHR has both A–Z and a–z).
 @store:
     ; Clip (don't wrap) in the upper/status window — header claims
     ; Z_HDR_COLS but we only have SCREEN_COLS of tiles.

@@ -71,6 +71,10 @@ function M.waiting()
   return M.rd("z_waiting_input") == 1
 end
 
+function M.waiting_char()
+  return M.rd("z_waiting_input") == 2
+end
+
 function M.waiting_any()
   return M.rd("z_waiting_input") ~= 0
 end
@@ -141,13 +145,16 @@ local function inject_now(cmd)
     cmd = cmd:sub(1, 64)
   end
   local buf = M.addr("z_line_buf")
+  for i = 0, 63 do
+    emu.write(buf + i, 0, mem)
+  end
   for i = 1, #cmd do
     emu.write(buf + i - 1, string.byte(cmd, i), mem)
   end
   M.wr("z_line_len", #cmd)
   M.wr("key_ascii", 0x0D)
   M.wr("key_ready", 1)
-  emu.log("inject> " .. cmd)
+  emu.log(string.format("inject> %s  (len=%d)", cmd, #cmd))
 end
 
 -- Call once per endFrame from the test script.
@@ -164,6 +171,13 @@ function M.tick()
 
   if frame < busy_until then
     return "busy"
+  end
+
+  -- [MORE] / HINT / any read_char: dismiss with Space so the queue can proceed.
+  if M.waiting_char() then
+    M.inject_char(0x20)
+    busy_until = frame + 8
+    return "more"
   end
 
   if #queue == 0 then
