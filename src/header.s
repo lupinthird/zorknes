@@ -5,7 +5,8 @@
     .byte "NES", $1A
     .byte 8                 ; 8 x 16 KiB PRG (128 KiB)
     .byte 0                 ; CHR-ROM = 0 (use CHR-RAM)
-    .byte $12               ; mapper low=1, battery-backed PRG-RAM, vertical mirroring
+    .byte $12               ; mapper 1, battery PRG-RAM (required for 32K WRAM).
+                            ; Bit 0 is iNES H-mirror; MMC1 control overrides at runtime.
     .byte $08               ; NES 2.0, mapper high nibble 0
     .byte $00               ; submapper 0 (sizes imply SXROM WRAM banking)
     .byte $00               ; PRG/CHR size MSB

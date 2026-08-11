@@ -18,6 +18,9 @@
 .importzp z_addr, z_tmpw
 .importzp cursor_col, cursor_row, win_cur
 .importzp input_mode
+.if ::SMOOTH_SCROLL
+.importzp scroll_busy
+.endif
 
 INPUT_MODE_PAD = 1
 Z_LINE_MAX = 64
@@ -78,6 +81,12 @@ pad_noun_hi: .res PAD_NOUN_MAX
     beq @modeok
     rts
 @modeok:
+.if ::SMOOTH_SCROLL
+    lda scroll_busy
+    beq @scroll_ok
+    rts
+@scroll_ok:
+.endif
     lda z_waiting_input
     cmp #ZWAIT_AREAD
     beq @go

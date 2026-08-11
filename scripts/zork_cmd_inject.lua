@@ -68,7 +68,15 @@ end
 
 function M.waiting()
   -- Line inject only while aread is active (not read_char / HINT).
-  return M.rd("z_waiting_input") == 1
+  if M.rd("z_waiting_input") ~= 1 then
+    return false
+  end
+  -- Don't type into a command that hasn't finished scrolling onto the screen.
+  local ok, busy = pcall(function() return M.rd("scroll_busy") end)
+  if ok and busy ~= 0 then
+    return false
+  end
+  return true
 end
 
 function M.waiting_char()

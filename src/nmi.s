@@ -8,6 +8,10 @@
 .importzp palette_dirty
 .importzp title_active
 .importzp z_rng
+.if ::SMOOTH_SCROLL
+.import text_scroll_tick, scroll_snap_nmi
+.importzp scroll_y
+.endif
 
 .segment "ZEROPAGE"
 frame_count: .res 1
@@ -36,12 +40,14 @@ oam: .res 256
     jsr palette_apply_now
 @no_pal:
     jsr text_flush_nmi
+.if ::SMOOTH_SCROLL
+    jsr text_scroll_tick
+    jsr scroll_snap_nmi
+.endif
     jsr restore_scroll
 
 @done:
     inc frame_count
-    ; Stir PRNG every frame so human timing (title wait, typing) diversifies play.
-    ; Scripted lockstep still needs an external reseed (see zork_troll_keyboard.lua).
     clc
     lda z_rng
     adc frame_count
@@ -49,7 +55,6 @@ oam: .res 256
     bcc @rngok
     inc z_rng+1
 @rngok:
-
     pla
     tay
     pla
@@ -64,6 +69,11 @@ oam: .res 256
     sta PPUCTRL
     lda #0
     sta PPUSCROLL
+.if ::SMOOTH_SCROLL
+    lda scroll_y
+.else
+    lda #0
+.endif
     sta PPUSCROLL
     rts
 .endproc

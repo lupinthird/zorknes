@@ -23,6 +23,10 @@
 .importzp pad1_pressed
 .importzp input_mode
 .importzp z_stream3_depth
+.if ::SMOOTH_SCROLL
+.import scroll_snap
+.importzp scroll_busy, scroll_need_snap, scroll_queue
+.endif
 
 INPUT_MODE_KB  = 0
 INPUT_MODE_PAD = 1
@@ -202,11 +206,29 @@ Z_LINE_MAX = 64
     beq @wait
 
 @input:
+.if ::SMOOTH_SCROLL
+    ; Snap only after the camera has caught up AND the VM is blocked, so
+    ; status/prompt redraw from the snap blit, not mid-scroll.
+    lda scroll_busy
+    beq @no_snap
+    lda scroll_queue
+    bne @no_snap
+    lda z_waiting_input
+    beq @no_snap
+    jsr scroll_snap
+@no_snap:
+.endif
     lda z_waiting_input
     cmp #ZWAIT_CHAR
     bne @not_char
     jmp @read_char
 @not_char:
+.if ::SMOOTH_SCROLL
+    lda scroll_busy
+    beq @input_ok
+    jmp @vm
+@input_ok:
+.endif
     ; SELECT = theme (either mode). Pad read must be atomic vs NMI.
     sei
     jsr read_pads
@@ -278,6 +300,16 @@ Z_LINE_MAX = 64
     jmp @vm
 
 @vm:
+.if ::SMOOTH_SCROLL
+    lda scroll_busy
+    beq @vm_ns
+    lda scroll_queue
+    bne @vm_ns
+    lda z_waiting_input
+    beq @vm_ns
+    jsr scroll_snap
+@vm_ns:
+.endif
     lda z_running
     bne @run
     lda z_waiting_input
@@ -338,12 +370,32 @@ Z_LINE_MAX = 64
     lda frame_count
     cmp vm_frame
     beq @steps
+.if ::SMOOTH_SCROLL
+    lda scroll_busy
+    beq @run_ns
+    lda scroll_queue
+    bne @run_ns
+    lda z_waiting_input
+    beq @run_ns
+    jsr scroll_snap
+@run_ns:
+.endif
     lda nt_resync
     beq @run_in
     jsr text_flush_frame
 @run_in:
     jmp @input
 @to_input:
+.if ::SMOOTH_SCROLL
+    lda scroll_busy
+    beq @to_ns
+    lda scroll_queue
+    bne @to_ns
+    lda z_waiting_input
+    beq @to_ns
+    jsr scroll_snap
+@to_ns:
+.endif
     lda nt_resync
     beq @run_in
     jsr text_flush_frame

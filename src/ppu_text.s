@@ -16,6 +16,10 @@
 .exportzp text_nmi_ok
 .export nt_mirror
 .export wait_vblank
+.if ::SMOOTH_SCROLL
+.export text_scroll_tick, scroll_snap, scroll_force_settle, scroll_snap_nmi
+.exportzp scroll_y, scroll_busy, scroll_need_snap, scroll_queue, scroll_buf_fill
+.endif
 
 VQ_MAX = 64
 NT_MIRROR_SIZE = 1024     ; nametable tiles + attributes
@@ -23,6 +27,13 @@ NT_MIRROR_SIZE = 1024     ; nametable tiles + attributes
 ; run into visible time (that scatters wrong tiles across the NT).
 FLUSH_PER_NMI = 32
 PROGRESS_PER_NMI = 24
+.if ::SMOOTH_SCROLL
+; Compact handshake (NMI ↔ main). Never bank WRAM from NMI.
+SNAP_PULL   = 1
+SNAP_BLIT   = 2
+SNAP_FINISH = 3
+SNAP_BATCH  = 2           ; rows per vblank (fits in vq_tile, 64 bytes)
+.endif
 
 .segment "ZEROPAGE"
 cursor_col:   .res 1
@@ -50,6 +61,19 @@ win1_row:     .res 1
 scroll_tmp:   .res 1
 scroll_ptr:   .res 2
 text_nmi_ok:  .res 1      ; 1 once NMI is enabled (VQ can wait on drain)
+.if ::SMOOTH_SCROLL
+scroll_y:         .res 1  ; fine Y (0 .. STORY_BUF*8)
+scroll_queue:     .res 1  ; remaining 8px line scrolls
+scroll_pix:       .res 1
+scroll_busy:      .res 1
+scroll_need_snap: .res 1
+scroll_buf_fill:  .res 1  ; lines sitting in NT2
+scroll_nt2:       .res 1  ; nonzero → store_mirror_tile targets NT2
+scroll_nt2_row:   .res 1  ; row within NT2 for current line
+scroll_phase:     .res 1  ; 0 idle, else SNAP_*
+scroll_snap_row:  .res 1
+scroll_snap_n:    .res 1  ; bytes for this NMI transfer
+.endif
 .exportzp nt_resync
 
 
@@ -120,6 +144,13 @@ nt_mirror:   .res 1024
 
 .proc ppu_clear_nt
     lda #$20
+    jsr fill_nametable
+    lda #$28                ; NT2 offscreen (horizontal mirroring)
+    jmp fill_nametable
+.endproc
+
+; A = nametable high ($20 / $24 / $28 / $2C)
+.proc fill_nametable
     sta PPUADDR
     lda #$00
     sta PPUADDR
@@ -144,6 +175,19 @@ nt_mirror:   .res 1024
     sta win0_row
     sta win1_col
     sta win1_row
+.if ::SMOOTH_SCROLL
+    sta scroll_y
+    sta scroll_queue
+    sta scroll_pix
+    sta scroll_busy
+    sta scroll_need_snap
+    sta scroll_buf_fill
+    sta scroll_nt2
+    sta scroll_nt2_row
+    sta scroll_phase
+    sta scroll_snap_row
+    sta scroll_snap_n
+.endif
     jsr zmem_wram_text_on
     lda #' '
     ldx #0
@@ -352,6 +396,33 @@ nt_mirror:   .res 1024
     inc cursor_row
     lda win_cur
     bne @upper
+.if ::SMOOTH_SCROLL
+    jsr smooth_usable
+    bne @legacy
+    lda cursor_row
+    cmp #STORY_ROWS
+    bcc @ok
+    lda scroll_buf_fill
+    cmp #STORY_BUF
+    bcc @slot
+    ; NT2 full: wait until the current burst has scrolled on-screen, then
+    ; snap once so we never reset fine-Y while the camera is still moving.
+    jsr scroll_wait_drain
+    jsr scroll_snap
+@slot:
+    lda scroll_buf_fill
+    sta scroll_nt2_row
+    jsr clear_nt2_row
+    inc scroll_buf_fill
+    inc scroll_queue
+    lda #1
+    sta scroll_busy
+    sta scroll_nt2
+    lda #STORY_ROWS-1
+    sta cursor_row
+    jmp @ok
+@legacy:
+.endif
     ; main window: scroll when past bottom
     lda cursor_row
     cmp #STORY_ROWS
@@ -442,6 +513,502 @@ nt_mirror:   .res 1024
     rts
 .endproc
 
+.if ::SMOOTH_SCROLL
+; A=0 if smooth path OK; A≠0 → legacy tile-copy scroll (large HINT splits).
+.proc smooth_usable
+    lda win_split
+    cmp #STORY_ROWS-2
+    bcs @no
+    lda #0
+    rts
+@no:
+    lda #1
+    rts
+.endproc
+
+; A = row in NT2 — queue 32 spaces at $2800 + row*32.
+.proc clear_nt2_row
+    jsr row_to_tile_off
+    lda tile_off_hi
+    ora #$28
+    sta tile_off_hi
+    ldy #0
+@vq:
+    sty ppu_tmp
+    lda tile_off_lo
+    pha
+    lda tile_off_hi
+    pha
+    lda tile_off_lo
+    clc
+    adc ppu_tmp
+    sta tile_off_lo
+    bcc :+
+    inc tile_off_hi
+:
+    lda #' '
+    sta tile_value
+    lda nt_resync
+    bne @skip
+    jsr vq_push
+@skip:
+    pla
+    sta tile_off_hi
+    pla
+    sta tile_off_lo
+    ldy ppu_tmp
+    iny
+    cpy #32
+    bne @vq
+    rts
+.endproc
+
+; NMI only: no WRAM/MMC1. Advance fine Y one pixel per queued line-scroll.
+; Do not snap when the queue hits 0 — more lines may still be appended
+; (one continuous camera). Main snaps when the VM is waiting for input.
+.proc text_scroll_tick
+    lda scroll_queue
+    beq @ret
+    inc scroll_y
+    inc scroll_pix
+    lda scroll_pix
+    cmp #8
+    bcc @ret
+    lda #0
+    sta scroll_pix
+    dec scroll_queue
+@ret:
+    rts
+.endproc
+
+; Wait until NMI has consumed scroll_queue (camera caught up with NT2 fill).
+.proc scroll_wait_drain
+    lda text_nmi_ok
+    beq @ret
+@loop:
+    lda scroll_queue
+    beq @ret
+    lda frame_count
+@w:
+    cmp frame_count
+    beq @w
+    jmp @loop
+@ret:
+    rts
+.endproc
+
+.proc scroll_force_settle
+    lda scroll_buf_fill
+    ora scroll_queue
+    beq @ret
+    jsr scroll_wait_drain
+    jsr scroll_snap
+@ret:
+    rts
+.endproc
+
+; End of a scroll burst. Never blanks the screen (PPUMASK stays on).
+; Typical command: leave the camera at scroll_y and VQ the status bar
+; onto the visible top row. Compact (Y→0) only when NT2 is full, and
+; only via vblank NMI copies so $2001 is never forced off mid-frame.
+.proc scroll_snap
+    lda scroll_busy
+    beq @ret
+    lda scroll_buf_fill
+    bne @have
+    lda #0
+    sta scroll_y
+    sta scroll_queue
+    sta scroll_pix
+    sta scroll_busy
+    sta scroll_need_snap
+    sta scroll_nt2
+@ret:
+    rts
+@have:
+    cmp #STORY_BUF
+    bcc scroll_lazy_settle
+    jmp scroll_compact
+.endproc
+
+; Camera stays put. Status tiles (already in the mirror) appear at the
+; row the camera has scrolled to — 32 VQ writes, no forced blank.
+.proc scroll_lazy_settle
+    lda scroll_y
+    lsr
+    lsr
+    lsr
+    sta scroll_tmp              ; coarse Y = visible top NT0 row
+    lda #0
+    sta ppu_tmp                 ; status row
+@rows:
+    lda ppu_tmp
+    cmp win_split
+    bcs @done
+    jsr vq_status_row
+    inc ppu_tmp
+    jmp @rows
+@done:
+    lda #0
+    sta scroll_busy
+    sta scroll_need_snap
+    rts
+.endproc
+
+; Mirror row ppu_tmp → VQ at NT0 row (scroll_tmp + ppu_tmp).
+; vq_push clobbers Y (ring index) — save the column, same as clear_nt2_row.
+.proc vq_status_row
+    lda ppu_tmp
+    jsr row_to_tile_off
+    jsr zmem_wram_text_on
+    lda #<nt_mirror
+    clc
+    adc tile_off_lo
+    sta mirror_ptr
+    lda #>nt_mirror
+    adc tile_off_hi
+    sta mirror_ptr+1
+    lda scroll_tmp
+    clc
+    adc ppu_tmp
+    jsr row_to_tile_off
+    lda tile_off_hi
+    ora #$20
+    sta scroll_ptr+1
+    lda tile_off_lo
+    sta scroll_ptr
+    ldy #0
+@c:
+    sty scroll_snap_n
+    lda (mirror_ptr),y
+    sta tile_value
+    tya
+    clc
+    adc scroll_ptr
+    sta tile_off_lo
+    lda scroll_ptr+1
+    adc #0
+    sta tile_off_hi
+    jsr vq_push
+    ldy scroll_snap_n
+    iny
+    cpy #32
+    bne @c
+    jsr zmem_wram_text_off
+    rts
+.endproc
+
+; NT2 full: rewrite NT0 to Y=0 without turning rendering off.
+; Pull/blit run in vblank (NMI); main only touches WRAM + the BSS stage.
+.proc scroll_compact
+    jsr snap_wait_vq
+    lda scroll_buf_fill
+    sta scroll_tmp              ; N
+    jsr zmem_wram_text_on
+    lda win_split
+    sta ppu_tmp
+@shift:
+    lda ppu_tmp
+    cmp #STORY_ROWS
+    bcs @shifted
+    clc
+    adc scroll_tmp
+    cmp #STORY_ROWS
+    bcc @copy
+    lda ppu_tmp
+    jsr row_blank_mirror
+    jmp @next
+@copy:
+    sta tile_value
+    jsr row_copy_mirror
+@next:
+    inc ppu_tmp
+    jmp @shift
+@shifted:
+    jsr zmem_wram_text_off
+    lda #0
+    sta scroll_snap_row
+@pull:
+    lda scroll_snap_row
+    cmp scroll_tmp
+    bcs @pulldone
+    jsr snap_batch_bytes
+    lda #SNAP_PULL
+    sta scroll_phase
+    jsr snap_wait_phase
+    lda #STORY_ROWS
+    sec
+    sbc scroll_tmp
+    clc
+    adc scroll_snap_row
+    jsr stage_to_mirror
+    lda scroll_snap_n
+    lsr
+    lsr
+    lsr
+    lsr
+    lsr                         ; bytes / 32 = rows
+    clc
+    adc scroll_snap_row
+    sta scroll_snap_row
+    jmp @pull
+@pulldone:
+    lda #0
+    sta scroll_snap_row
+@blit:
+    lda scroll_snap_row
+    cmp scroll_tmp
+    bcs @blitdone
+    jsr snap_batch_bytes
+    lda scroll_snap_row
+    jsr mirror_to_stage
+    lda #SNAP_BLIT
+    sta scroll_phase
+    jsr snap_wait_phase
+    lda scroll_snap_n
+    lsr
+    lsr
+    lsr
+    lsr
+    lsr
+    clc
+    adc scroll_snap_row
+    sta scroll_snap_row
+    jmp @blit
+@blitdone:
+    ; Remaining NT0 rows [N, 30) + Y=0 in one vblank.
+    lda #30
+    sec
+    sbc scroll_tmp
+    asl
+    asl
+    asl
+    asl
+    asl                         ; rows * 32
+    sta scroll_snap_n
+    lda scroll_tmp
+    sta scroll_snap_row
+    jsr mirror_to_stage
+    lda #SNAP_FINISH
+    sta scroll_phase
+    jsr snap_wait_phase
+    lda #STORY_ROWS-1
+    sta cursor_row
+    sta win0_row
+    rts
+.endproc
+
+; Bytes for this batch: min(SNAP_BATCH, N - snap_row) * 32.
+.proc snap_batch_bytes
+    lda scroll_tmp
+    sec
+    sbc scroll_snap_row
+    cmp #SNAP_BATCH
+    bcc @small
+    lda #SNAP_BATCH
+@small:
+    asl
+    asl
+    asl
+    asl
+    asl
+    sta scroll_snap_n
+    rts
+.endproc
+
+.proc snap_wait_phase
+    lda text_nmi_ok
+    beq @fail
+@loop:
+    lda scroll_phase
+    beq @ret
+    lda frame_count
+@w:
+    cmp frame_count
+    beq @w
+    jmp @loop
+@fail:
+    lda #0
+    sta scroll_phase
+@ret:
+    rts
+.endproc
+
+; Compact reuses vq_tile as the PPU stage — drain the ring first.
+.proc snap_wait_vq
+    lda text_nmi_ok
+    beq @force
+@loop:
+    lda vq_head
+    cmp vq_tail
+    beq @ret
+    lda frame_count
+@w:
+    cmp frame_count
+    beq @w
+    jmp @loop
+@force:
+    lda #0
+    sta vq_head
+    sta vq_tail
+@ret:
+    rts
+.endproc
+
+; A = dest row. Copy scroll_snap_n bytes stage → mirror.
+.proc stage_to_mirror
+    jsr row_to_tile_off
+    jsr zmem_wram_text_on
+    lda #<nt_mirror
+    clc
+    adc tile_off_lo
+    sta mirror_ptr
+    lda #>nt_mirror
+    adc tile_off_hi
+    sta mirror_ptr+1
+    ldy #0
+@c:
+    lda vq_tile,y
+    sta (mirror_ptr),y
+    iny
+    cpy scroll_snap_n
+    bne @c
+    jmp zmem_wram_text_off
+.endproc
+
+; A = src row. Copy scroll_snap_n bytes mirror → stage.
+.proc mirror_to_stage
+    jsr row_to_tile_off
+    jsr zmem_wram_text_on
+    lda #<nt_mirror
+    clc
+    adc tile_off_lo
+    sta mirror_ptr
+    lda #>nt_mirror
+    adc tile_off_hi
+    sta mirror_ptr+1
+    ldy #0
+@c:
+    lda (mirror_ptr),y
+    sta vq_tile,y
+    iny
+    cpy scroll_snap_n
+    bne @c
+    jmp zmem_wram_text_off
+.endproc
+
+; NMI only: no WRAM/MMC1. Sequential $2007 to/from snap_stage.
+.proc scroll_snap_nmi
+    lda scroll_phase
+    beq @ret
+    cmp #SNAP_PULL
+    beq @pull
+    lda scroll_snap_row
+    jsr row_to_tile_off
+    bit PPUSTATUS
+    lda tile_off_hi
+    ora #$20
+    sta PPUADDR
+    lda tile_off_lo
+    sta PPUADDR
+    ldx #0
+@wr:
+    lda vq_tile,x
+    sta PPUDATA
+    inx
+    cpx scroll_snap_n
+    bne @wr
+    lda scroll_phase
+    cmp #SNAP_FINISH
+    bne @clr
+    lda #0
+    sta scroll_y
+    sta scroll_queue
+    sta scroll_pix
+    sta scroll_buf_fill
+    sta scroll_busy
+    sta scroll_need_snap
+    sta scroll_nt2
+    sta scroll_nt2_row
+@clr:
+    lda #0
+    sta scroll_phase
+@ret:
+    rts
+@pull:
+    lda scroll_snap_row
+    jsr row_to_tile_off
+    bit PPUSTATUS
+    lda tile_off_hi
+    ora #$28
+    sta PPUADDR
+    lda tile_off_lo
+    sta PPUADDR
+    lda PPUDATA
+    ldx #0
+@rd:
+    lda PPUDATA
+    sta vq_tile,x
+    inx
+    cpx scroll_snap_n
+    bne @rd
+    lda #0
+    sta scroll_phase
+    rts
+.endproc
+
+; Blank mirror row A (WRAM text bank already on).
+.proc row_blank_mirror
+    jsr row_to_tile_off
+    lda #<nt_mirror
+    clc
+    adc tile_off_lo
+    sta mirror_ptr
+    lda #>nt_mirror
+    adc tile_off_hi
+    sta mirror_ptr+1
+    ldy #0
+    lda #' '
+@b:
+    sta (mirror_ptr),y
+    iny
+    cpy #32
+    bne @b
+    rts
+.endproc
+
+; Copy mirror: src=tile_value, dest=ppu_tmp (WRAM on).
+.proc row_copy_mirror
+    lda tile_value
+    jsr row_to_tile_off
+    lda #<nt_mirror
+    clc
+    adc tile_off_lo
+    sta scroll_ptr
+    lda #>nt_mirror
+    adc tile_off_hi
+    sta scroll_ptr+1
+    lda ppu_tmp
+    jsr row_to_tile_off
+    lda #<nt_mirror
+    clc
+    adc tile_off_lo
+    sta mirror_ptr
+    lda #>nt_mirror
+    adc tile_off_hi
+    sta mirror_ptr+1
+    ldy #0
+@c:
+    lda (scroll_ptr),y
+    sta (mirror_ptr),y
+    iny
+    cpy #32
+    bne @c
+    rts
+.endproc
+
+.endif ; SMOOTH_SCROLL
+
 ; Clear rows [A, X] inclusive (0-based), spaces only.
 .proc text_erase_rows
     sta scroll_tmp          ; start row
@@ -476,7 +1043,13 @@ nt_mirror:   .res 1024
     jmp @row
 @done:
     jsr zmem_wram_text_off
+.if ::SMOOTH_SCROLL
+    lda scroll_busy
+    ora scroll_y
+    bne @ret
+.endif
     jsr begin_nt_resync
+@ret:
     rts
 .endproc
 
@@ -504,7 +1077,13 @@ nt_mirror:   .res 1024
     bne @loop
 @done:
     jsr zmem_wram_text_off
+.if ::SMOOTH_SCROLL
+    lda scroll_busy
+    ora scroll_y
+    bne @eret
+.endif
     jsr begin_nt_resync
+@eret:
     rts
 .endproc
 
@@ -536,6 +1115,9 @@ nt_mirror:   .res 1024
     jsr zmem_wram_text_off
     lda nt_resync
     bne @dirty
+    lda tile_off_hi
+    ora #$20
+    sta tile_off_hi
     jsr vq_push
 @dirty:
     lda #1
@@ -753,6 +1335,30 @@ nt_mirror:   .res 1024
 ; NMI resync — never a multi-frame PPUMASK blank copy.
 .proc store_mirror_tile
     sta tile_value
+.if ::SMOOTH_SCROLL
+    ; Offscreen NT2 line (below the fold under horizontal mirroring).
+    lda scroll_nt2
+    beq @nt0
+    lda win_cur
+    bne @nt0
+    lda scroll_nt2_row
+    jsr row_to_tile_off
+    lda tile_off_lo
+    clc
+    adc cursor_col
+    sta tile_off_lo
+    bcc :+
+    inc tile_off_hi
+:
+    lda tile_off_hi
+    ora #$28
+    sta tile_off_hi
+    lda nt_resync
+    bne @dirty
+    jsr vq_push
+    jmp @dirty
+@nt0:
+.endif
     ; Main window must never draw into the status rows or HUD row
     lda win_cur
     bne @pos
@@ -794,6 +1400,32 @@ nt_mirror:   .res 1024
     ; While a full resync is streaming, skip VQ (mirror is truth).
     lda nt_resync
     bne @dirty
+.if ::SMOOTH_SCROLL
+    ; Don't poke NT0 while the camera moves; lazy settle VQs status after.
+    lda scroll_busy
+    bne @dirty
+    lda win_cur
+    beq @vq0
+    lda scroll_y
+    beq @vq0
+    ; Status PPU row is the visible top (coarse Y), not mirror row 0.
+    lsr
+    lsr
+    lsr
+    clc
+    adc cursor_row
+    jsr row_to_tile_off
+    lda tile_off_lo
+    clc
+    adc cursor_col
+    sta tile_off_lo
+    bcc @vq0
+    inc tile_off_hi
+@vq0:
+.endif
+    lda tile_off_hi
+    ora #$20
+    sta tile_off_hi
     jsr vq_push
 @dirty:
     lda #1
@@ -925,7 +1557,10 @@ nt_mirror:   .res 1024
     beq @vq_empty
     tay
     lda vq_hi,y
-    ora #$20
+    cmp #$20
+    bcs :+
+    ora #$20                  ; offset-only entries → NT0 (never CHR)
+:
     sta PPUADDR
     lda vq_lo,y
     sta PPUADDR
@@ -953,6 +1588,13 @@ nt_mirror:   .res 1024
 .proc text_flush_frame
     lda nt_resync
     beq @ret
+.if ::SMOOTH_SCROLL
+    ; Mid-scroll or parked-with-Y≠0: a Y=0 blit is the end-of-scroll flash.
+    lda scroll_busy
+    ora scroll_y
+    ora scroll_buf_fill
+    bne @ret
+.endif
     php
     sei
     lda #0

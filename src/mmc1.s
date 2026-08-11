@@ -75,10 +75,10 @@ mmc1_wram_bank: .res 1
 .endproc
 
 ; 16K PRG @ $8000, fixed last @ $C000; 8K CHR (SXROM CHR-RAM);
-; vertical mirroring. Control: CHR8K, PRG mode 3, mirror V → %01110
+; horizontal mirroring (stacked NTs: $2000 + $2800). CHR8K, PRG mode 3 → %01111
 .proc mmc1_init
     jsr mmc1_reset
-    lda #%01110
+    lda #%01111
     jsr mmc1_write_ctrl
     lda #0
     sta mmc1_prgbank
