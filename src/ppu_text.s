@@ -2,6 +2,7 @@
 
 .import zmem_wram_text_on, zmem_wram_text_off
 .import mmc1_set_prg
+.importzp mmc1_prgbank
 .import font_chr
 .import z_word_reset
 .importzp frame_count
@@ -9,7 +10,7 @@
 .export text_flush_all, text_flush_nmi, text_flush_frame, text_newline, text_home
 .export text_clear_tile0, text_set_cursor, text_set_cursor_z
 .export text_split_window, text_set_window, text_erase_window, text_erase_line
-.export text_poke_xy, text_capture_vram
+.export text_poke_xy, text_poke_hud, text_capture_vram
 .exportzp cursor_col, cursor_row, text_dirty, str_ptr
 .exportzp win_split, win_cur
 .exportzp tile_off_lo, tile_off_hi, tile_value
@@ -411,6 +412,10 @@ nt_mirror:   .res 1024
     jsr scroll_snap
 @slot:
     lda scroll_buf_fill
+    bne @noclear
+    jsr blank_nt0_hud           ; old row-29 picker must not scroll into story
+@noclear:
+    lda scroll_buf_fill
     sta scroll_nt2_row
     jsr clear_nt2_row
     inc scroll_buf_fill
@@ -634,6 +639,18 @@ nt_mirror:   .res 1024
 ; Camera stays put. Status tiles (already in the mirror) appear at the
 ; row the camera has scrolled to — 32 VQ writes, no forced blank.
 .proc scroll_lazy_settle
+    ; One extra tile row so the pad HUD sits under the prompt, not on it.
+    lda scroll_buf_fill
+    asl a
+    asl a
+    asl a
+    clc
+    adc #8
+    cmp scroll_y
+    beq @place
+    inc scroll_queue
+    rts
+@place:
     lda scroll_y
     lsr
     lsr
@@ -644,11 +661,13 @@ nt_mirror:   .res 1024
 @rows:
     lda ppu_tmp
     cmp win_split
-    bcs @done
+    bcs @hudrow
     jsr vq_status_row
     inc ppu_tmp
     jmp @rows
-@done:
+@hudrow:
+    lda scroll_buf_fill
+    jsr clear_nt2_row           ; blank the HUD gutter (NT2 row = fill)
     lda #0
     sta scroll_busy
     sta scroll_need_snap
@@ -1124,6 +1143,43 @@ nt_mirror:   .res 1024
     sta text_dirty
     rts
 .endproc
+
+; A = glyph, X = column. Pins to the visible bottom row (NT0 row 29 at
+; Y=0; NT2 row coarse_y-1 after a scroll, i.e. under the prompt).
+.proc text_poke_hud
+    sta tile_value
+    stx ppu_tmp
+.if ::SMOOTH_SCROLL
+    lda scroll_y
+    bne @scrolled
+.endif
+    lda tile_value
+    ldx ppu_tmp
+    ldy #STORY_ROWS             ; 29
+    jmp text_poke_xy
+.if ::SMOOTH_SCROLL
+@scrolled:
+    lda mmc1_prgbank
+    pha
+    lda #6
+    jsr mmc1_set_prg
+    jsr text_poke_hud_nt2
+    pla
+    jmp mmc1_set_prg
+.endif
+.endproc
+
+.if ::SMOOTH_SCROLL
+.proc blank_nt0_hud
+    lda mmc1_prgbank
+    pha
+    lda #6
+    jsr mmc1_set_prg
+    jsr blank_nt0_hud_far
+    pla
+    jmp mmc1_set_prg
+.endproc
+.endif
 
 .proc text_split_window
     ; A = lines in upper window.
@@ -1646,3 +1702,81 @@ nt_mirror:   .res 1024
 @ret:
     rts
 .endproc
+
+.if ::SMOOTH_SCROLL
+; HUD helpers in bank 6 — ROM7 is full.
+.segment "STORY6"
+
+.proc text_poke_hud_nt2
+    lda scroll_y
+    lsr
+    lsr
+    lsr
+    sec
+    sbc #1
+    jsr row_to_tile_off
+    lda tile_off_lo
+    clc
+    adc ppu_tmp
+    sta tile_off_lo
+    bcc :+
+    inc tile_off_hi
+:
+    lda tile_off_hi
+    ora #$28
+    sta tile_off_hi
+    lda nt_resync
+    bne @dirty
+    jsr vq_push
+@dirty:
+    lda #1
+    sta text_dirty
+    rts
+.endproc
+
+.proc blank_nt0_hud_far
+    jsr zmem_wram_text_on
+    ldy #0
+    lda #' '
+@m:
+    sta nt_mirror+$3A0,y
+    iny
+    cpy #32
+    bne @m
+    jsr zmem_wram_text_off
+    lda #STORY_ROWS
+    jsr row_to_tile_off
+    lda tile_off_hi
+    ora #$20
+    sta tile_off_hi
+    ldy #0
+@vq:
+    sty ppu_tmp
+    lda tile_off_lo
+    pha
+    lda tile_off_hi
+    pha
+    lda tile_off_lo
+    clc
+    adc ppu_tmp
+    sta tile_off_lo
+    bcc :+
+    inc tile_off_hi
+:
+    lda #' '
+    sta tile_value
+    lda nt_resync
+    bne @skip
+    jsr vq_push
+@skip:
+    pla
+    sta tile_off_hi
+    pla
+    sta tile_off_lo
+    ldy ppu_tmp
+    iny
+    cpy #32
+    bne @vq
+    rts
+.endproc
+.endif

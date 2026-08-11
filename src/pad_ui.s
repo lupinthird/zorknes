@@ -6,7 +6,7 @@
 .export pad_ui_on_aread, pad_ui_poll, pad_ui_reset
 .exportzp pad_cat, pad_idx
 
-.import text_put_char, text_newline, text_poke_xy
+.import text_put_char, text_newline, text_poke_hud
 .import z_aread_commit, z_line_buf
 .import z_obj_addr, z_obj_parent, z_obj_child, z_obj_sibling, z_capture_obj_name
 .import z_get_var
@@ -824,8 +824,7 @@ PROP_GLOBAL     = 37
     txa
     pha
     lda #' '
-    ldy #HUD_ROW
-    jsr text_poke_xy
+    jsr text_poke_hud
     pla
     tax
     inx
@@ -862,12 +861,10 @@ PROP_GLOBAL     = 37
     lda #'Y'
 @pout:
     ldx #0
-    ldy #HUD_ROW
-    jsr text_poke_xy
+    jsr text_poke_hud
     lda #':'
     ldx #1
-    ldy #HUD_ROW
-    jsr text_poke_xy
+    jsr text_poke_hud
 
     jsr pad_resolve_word
     bcs @empty
@@ -882,8 +879,7 @@ PROP_GLOBAL     = 37
     txa
     pha
     lda pad_tmp
-    ldy #HUD_ROW
-    jsr text_poke_xy            ; A=char, X=col, Y=row
+    jsr text_poke_hud           ; A=char, X=col (visible bottom row)
     pla
     tax
     pla
@@ -896,8 +892,7 @@ PROP_GLOBAL     = 37
 @empty:
     lda #'-'
     ldx #2
-    ldy #HUD_ROW
-    jsr text_poke_xy
+    jsr text_poke_hud
 @done:
     rts
 .endproc
