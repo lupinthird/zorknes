@@ -473,6 +473,14 @@ chr_plane0:   .res 8       ; scratch for title paper-font convert
 .endproc
 
 .proc title_write_messages
+    lda #<msg_ver
+    sta str_ptr
+    lda #>msg_ver
+    sta str_ptr+1
+    ldx #17
+    ldy #1
+    jsr title_put_str_at
+
     lda #<msg_kb
     sta str_ptr
     lda #>msg_kb
@@ -661,6 +669,8 @@ chr_plane0:   .res 8       ; scratch for title paper-font convert
 
 ; Title copy lives in PRG bank 6 (ROM7 is full). Bank 6 in before printing.
 .segment "STORY6"
+msg_ver:
+    .byte "                          v1.0", 0
 msg_kb:
     .byte "Enter=Keyboard   Start=Gamepad", 0
 msg_f1:
@@ -689,4 +699,4 @@ msg_egg:
     .byte "Press START or ENTER to exit.", 0
 
 .segment "RODATA"
-.include "../nam/zorklogont.s"
+.include "../nam/zorklogont.asm"
