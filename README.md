@@ -53,7 +53,7 @@ Use **Mesen 2**. Enable battery saves so **SAVE** / **RESTORE** persist.
 Type normally at the `>` prompt. **Enter** submits. **F1** still cycles themes in-game.
 
 **Gamepad (after Start on title) — word picker on the bottom HUD row:**
-- **Left / Right** — category: Verb / Adj / Noun / Prep / Yes-No / Nav (`V:` / `A:` / `N:` / `P:` / `Y:` / `G:`)
+- **Left / Right** — category: Verb / Adj / Noun / Prep / Yes-No / Nav / Magic (`V:` / `A:` / `N:` / `P:` / `Y:` / `G:` / `M:`)
 - **Up / Down** — choose word in that category
 - **A** — append word + space to the command
 - **B** — backspace
@@ -62,7 +62,11 @@ Type normally at the `>` prompt. **Enter** submits. **F1** still cycles themes i
 
 The picker stays pinned to the visible bottom row while the story scrolls. Pad and keyboard input wait until a scroll finishes before the next command is accepted.
 
-`Y:` has **YES / NO / Y / N / HINT**. The first `HINT` only shows a warning — submit `HINT` again to open Invisiclues. On that screen the word picker stays hidden and the pad is rebound: **Up**=P, **Down**=N, **A/Start**=Return, **B**=Q. Keyboard N/P/Enter/Q also work. Complex lines still build the same way, e.g. `KILL` + `TROLL` + `WITH` + `SWORD`.
+`Y:` has **YES / NO / Y / N / HINT**. The first `HINT` only shows a warning — submit `HINT` again to open Invisiclues. On that screen the word picker stays hidden and the pad is rebound: **Up**=P, **Down**=N, **A/Start**=Return, **B**=Q. Keyboard N/P/Enter/Q also work.
+
+`N:` always starts with **ALL** (`TAKE ALL`). `M:` is the puzzle-word list a keyboard player could type but the picker would otherwise never see: **ECHO** (Loud Room), **ODYSSEUS** / **ULYSSES** (Cyclops), **TEMPLE** / **PRAY** / **TREASURE** (altar). Extra verbs for a 350-point run live in `V:` (**RING**, **TOUCH**, **INFLATE**, **LAUNCH**, **WIND**, **LOWER**, **RAISE**, **DIG**), plus **OFF** in `P:` and **YELLOW** / **BROWN** in `A:`.
+
+Complex lines still build the same way, e.g. `KILL` + `TROLL` + `WITH` + `SWORD`, or `INFLATE` + `BOAT` + `WITH` + `PUMP`.
 
 **In-game commands (either mode):** **SAVE** / **RESTORE** use a single battery slot in WRAM. **QUIT** returns to the title screen (input mode is chosen again). **RESTART** reloads the story without the title.
 
@@ -100,3 +104,30 @@ Any copy or substantial portion of this project that includes the story file mus
 Playable Zork I: 32-column mixed-case output with word-boundary wrapping, Solid Gold status line, smooth NT2 story scroll (MMC1 horizontal mirroring), title logo/font CHR split, gamepad word picker, Family BASIC keyboard, battery save/restore, theme preview, and QUIT back to title.
 
 Still interpreter-side gaps, not required for a normal playthrough: `scan_table` is unimplemented; packing is sized for this `zork1.z5` rather than arbitrary story files.
+
+## Cart packing (v1.0)
+
+MMC1 SXROM is eight 16 KiB PRG banks. The Z-machine story eats most of them. Word-picker strings live in ROM6 so ROM7 can hold the interpreter. Snapshot from `build/neszork.map`:
+
+| Bank | What’s in it | Used | Free |
+| --- | --- | ---: | ---: |
+| ROM0–ROM5 | `zork1.z5` story | 16,384 × 6 | 0 |
+| ROM6 | Story tail (6,960) + font (4 KiB) + logo CHR (4 KiB) + title strings + HUD helpers + picker words | 16,359 | **25** |
+| ROM7 | Interpreter `CODE` + `RODATA` + vectors | 16,074 | **310** |
+
+Zeropage is 255 / 256 bytes; onboard BSS (`$0300–$07FF`) has **1 byte** left. Sprites are unused (OAM is reserved anyway).
+
+Where ROM7’s ~16 KiB of code and tables actually go:
+
+| Slice | Bytes | Share of ROM7 |
+| --- | ---: | ---: |
+| Z-machine (`zops` / `zdecode` / `ztoken` / `zvm` / `zmem`) | 7,459 | 46% |
+| Text engine (`ppu_text`, including scroll) | 2,453 | 15% |
+| Title (routines + 1 KiB nametable) | 2,128 | 13% |
+| Gamepad word picker (`pad_ui` code + pointers; strings in ROM6) | 1,602 | 10% |
+| Battery SAVE / RESTORE | 965 | 6% |
+| Main loop / reset | 720 | 4% |
+| Family BASIC keyboard | 296 | 2% |
+| Themes, MMC1, NMI, pad strobe, typewriter SFX | ~445 | 3% |
+
+The NT2 smooth-scroll path is about **760 bytes** of `ppu_text` (plus HUD helpers in ROM6). Picker word lists (~560 bytes) also sit in ROM6. A music engine still does not fit: ROM6 has 25 bytes left, and 310 bytes in ROM7 is not a soundtrack.

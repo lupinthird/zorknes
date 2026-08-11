@@ -13,7 +13,8 @@
 .import pad_name_buf, pad_name_len
 .import zmem_loadb, zmem_loadw
 .import sfx_boop
-.importzp pad1_pressed
+.import mmc1_set_prg
+.importzp pad1_pressed, mmc1_prgbank
 .importzp z_waiting_input, z_line_len, z_ops_lo, z_ops_hi, z_a
 .importzp z_addr, z_tmpw
 .importzp cursor_col, cursor_row, win_cur
@@ -30,7 +31,8 @@ PAD_CAT_NOUN = 2
 PAD_CAT_PREP = 3
 PAD_CAT_ANS  = 4
 PAD_CAT_NAV  = 5
-PAD_CAT_COUNT = 6
+PAD_CAT_MAGIC = 6
+PAD_CAT_COUNT = 7
 PAD_NOUN_MAX = 32
 ; Solid Gold: ADVENTURER ("cretin"), not pseudo "you" (21 under IT).
 PLAYER_OBJ = 46
@@ -52,6 +54,7 @@ pad_word_hi:   .res 1
 .segment "BSS"
 pad_noun_lo: .res PAD_NOUN_MAX
 pad_noun_hi: .res PAD_NOUN_MAX
+pad_bank_save: .res 1              ; $FF = no STORY6 map; else previous PRG bank
 
 .segment "CODE"
 
@@ -223,7 +226,12 @@ pad_noun_hi: .res PAD_NOUN_MAX
     beq @p
     cmp #PAD_CAT_ANS
     beq @y
+    cmp #PAD_CAT_MAGIC
+    beq @m
     lda #NAV_COUNT
+    rts
+@m:
+    lda #MAGIC_COUNT
     rts
 @v:
     lda #VERB_COUNT
@@ -246,7 +254,9 @@ pad_noun_hi: .res PAD_NOUN_MAX
 .proc pad_resolve_word
     lda pad_cat
     cmp #PAD_CAT_NOUN
-    beq @noun
+    bne @notnoun
+    jmp @noun
+@notnoun:
     cmp #PAD_CAT_VERB
     beq @verb
     cmp #PAD_CAT_ADJ
@@ -255,10 +265,12 @@ pad_noun_hi: .res PAD_NOUN_MAX
     beq @prep
     cmp #PAD_CAT_ANS
     beq @ans
+    cmp #PAD_CAT_MAGIC
+    beq @magic
     ; nav
     lda pad_idx
     cmp #NAV_COUNT
-    bcs @fail
+    bcs @fail_far
     asl a
     tax
     lda nav_ptrs,x
@@ -267,10 +279,12 @@ pad_noun_hi: .res PAD_NOUN_MAX
     sta pad_word_hi
     clc
     rts
+@fail_far:
+    jmp @fail
 @verb:
     lda pad_idx
     cmp #VERB_COUNT
-    bcs @fail
+    bcs @fail_far
     asl a
     tax
     lda verb_ptrs,x
@@ -315,6 +329,18 @@ pad_noun_hi: .res PAD_NOUN_MAX
     sta pad_word_hi
     clc
     rts
+@magic:
+    lda pad_idx
+    cmp #MAGIC_COUNT
+    bcs @fail
+    asl a
+    tax
+    lda magic_ptrs,x
+    sta pad_word_lo
+    lda magic_ptrs+1,x
+    sta pad_word_hi
+    clc
+    rts
 @noun:
     lda pad_noun_count
     beq @fail
@@ -322,6 +348,16 @@ pad_noun_hi: .res PAD_NOUN_MAX
     cmp pad_noun_count
     bcs @fail
     tax
+    lda pad_noun_lo,x
+    ora pad_noun_hi,x
+    bne @obj
+    lda #<w_all                 ; object 0 = synthetic ALL
+    sta pad_word_lo
+    lda #>w_all
+    sta pad_word_hi
+    clc
+    rts
+@obj:
     lda pad_noun_lo,x
     sta z_ops_lo
     lda pad_noun_hi,x
@@ -372,6 +408,7 @@ pad_noun_hi: .res PAD_NOUN_MAX
     jsr pad_resolve_word
     bcs @ret
     jsr sfx_boop
+    jsr pad_word_map
     ldy #0
 @copy:
     lda (pad_word_lo),y
@@ -379,7 +416,7 @@ pad_noun_hi: .res PAD_NOUN_MAX
     sta pad_tmp
     lda z_line_len
     cmp #Z_LINE_MAX
-    bcs @ret
+    bcs @unmap
     tax
     lda pad_tmp
     sta z_line_buf,x
@@ -395,12 +432,14 @@ pad_noun_hi: .res PAD_NOUN_MAX
 @sp:
     lda z_line_len
     cmp #Z_LINE_MAX
-    bcs @ret
+    bcs @unmap
     tax
     lda #' '
     sta z_line_buf,x
     inc z_line_len
     jsr text_put_char
+@unmap:
+    jsr pad_word_unmap
 @ret:
     rts
 .endproc
@@ -438,7 +477,11 @@ ATTR_TRANSBIT   = 29
 PROP_GLOBAL     = 37
 
 .proc pad_rebuild_nouns
+    ; Slot 0 is always ALL (TAKE ALL / DROP ALL). Real objects follow.
     lda #0
+    sta pad_noun_lo
+    sta pad_noun_hi
+    lda #1
     sta pad_noun_count
     ; Room from HERE (correct even when boarded in a vehicle).
     ldy #GVAR_HERE
@@ -843,7 +886,12 @@ PROP_GLOBAL     = 37
     beq @pp
     cmp #PAD_CAT_ANS
     beq @py
+    cmp #PAD_CAT_MAGIC
+    beq @pm
     lda #'G'
+    jmp @pout
+@pm:
+    lda #'M'
     jmp @pout
 @pv:
     lda #'V'
@@ -868,11 +916,12 @@ PROP_GLOBAL     = 37
 
     jsr pad_resolve_word
     bcs @empty
+    jsr pad_word_map
     ldy #0
     ldx #2                      ; column
 @w:
     lda (pad_word_lo),y
-    beq @done
+    beq @unmap
     sta pad_tmp
     tya
     pha
@@ -886,22 +935,48 @@ PROP_GLOBAL     = 37
     tay
     inx
     cpx #SCREEN_COLS
-    bcs @done
+    bcs @unmap
     iny
     jmp @w
 @empty:
     lda #'-'
     ldx #2
     jsr text_poke_hud
-@done:
+    rts
+@unmap:
+    jsr pad_word_unmap
     rts
 .endproc
 
-; --- Word tables ---------------------------------------------------------
+; Static picker strings live in STORY6. Bit 7 of the pointer high byte
+; means "$8000+" → map bank 6. Object names in pad_name_buf stay in RAM.
+.proc pad_word_map
+    lda #$FF
+    sta pad_bank_save
+    lda pad_word_hi
+    bpl @ret
+    lda mmc1_prgbank
+    sta pad_bank_save
+    lda #6
+    jmp mmc1_set_prg
+@ret:
+    rts
+.endproc
+
+.proc pad_word_unmap
+    lda pad_bank_save
+    cmp #$FF
+    beq @ret
+    jmp mmc1_set_prg
+@ret:
+    rts
+.endproc
+
+; --- Word tables (pointers in ROM7; strings in STORY6 — ROM7 is full) ----
 
 .segment "RODATA"
 
-VERB_COUNT = 43
+VERB_COUNT = 51
 verb_ptrs:
     .word v_look, v_examine, v_take, v_drop, v_put, v_open, v_close, v_read
     .word v_attack, v_kill, v_inv, v_wait, v_again, v_enter, v_exit, v_climb, v_turn
@@ -909,6 +984,32 @@ verb_ptrs:
     .word v_extinguish, v_eat, v_drink, v_fill, v_empty, v_say, v_ask, v_tell
     .word v_diagnose, v_score, v_save, v_restore, v_restart, v_quit
     .word v_verbose, v_brief, v_wave, v_break
+    .word v_ring, v_touch, v_inflate, v_launch, v_wind, v_lower, v_raise, v_dig
+
+ADJ_COUNT = 14
+adj_ptrs:
+    .word a_brass, a_old, a_small, a_large, a_red, a_blue
+    .word a_white, a_black, a_wooden, a_magic, a_burning, a_nasty
+    .word a_yellow, a_brown
+
+PREP_COUNT = 11
+prep_ptrs:
+    .word p_with, p_in, p_on, p_off, p_from, p_to, p_at, p_out, p_over, p_under, p_about
+
+ANS_COUNT = 5
+ans_ptrs:
+    .word y_yes, y_no, y_y, y_n, y_hint
+
+NAV_COUNT = 10
+nav_ptrs:
+    .word n_north, n_nw, n_west, n_sw, n_south, n_se, n_east, n_ne, n_up, n_down
+
+; Loud Room / Cyclops / Temple puzzle words (not objects, not everyday verbs).
+MAGIC_COUNT = 6
+magic_ptrs:
+    .word m_echo, m_odysseus, m_ulysses, m_temple, m_pray, m_treasure
+
+.segment "STORY6"
 
 v_look: .byte "LOOK", 0
 v_examine: .byte "EXAMINE", 0
@@ -953,11 +1054,14 @@ v_verbose: .byte "VERBOSE", 0
 v_brief: .byte "BRIEF", 0
 v_wave: .byte "WAVE", 0
 v_break: .byte "BREAK", 0
-
-ADJ_COUNT = 12
-adj_ptrs:
-    .word a_brass, a_old, a_small, a_large, a_red, a_blue
-    .word a_white, a_black, a_wooden, a_magic, a_burning, a_nasty
+v_ring: .byte "RING", 0
+v_touch: .byte "TOUCH", 0
+v_inflate: .byte "INFLATE", 0
+v_launch: .byte "LAUNCH", 0
+v_wind: .byte "WIND", 0
+v_lower: .byte "LOWER", 0
+v_raise: .byte "RAISE", 0
+v_dig: .byte "DIG", 0
 
 a_brass: .byte "BRASS", 0
 a_old: .byte "OLD", 0
@@ -971,14 +1075,13 @@ a_wooden: .byte "WOODEN", 0
 a_magic: .byte "MAGIC", 0
 a_burning: .byte "BURNING", 0
 a_nasty: .byte "NASTY", 0
-
-PREP_COUNT = 10
-prep_ptrs:
-    .word p_with, p_in, p_on, p_from, p_to, p_at, p_out, p_over, p_under, p_about
+a_yellow: .byte "YELLOW", 0
+a_brown: .byte "BROWN", 0
 
 p_with: .byte "WITH", 0
 p_in: .byte "IN", 0
 p_on: .byte "ON", 0
+p_off: .byte "OFF", 0
 p_from: .byte "FROM", 0
 p_to: .byte "TO", 0
 p_at: .byte "AT", 0
@@ -987,20 +1090,11 @@ p_over: .byte "OVER", 0
 p_under: .byte "UNDER", 0
 p_about: .byte "ABOUT", 0
 
-; Finish / YES? prompts (Solid Gold: YES/Y/NO/N/HINT + menu verbs elsewhere)
-ANS_COUNT = 5
-ans_ptrs:
-    .word y_yes, y_no, y_y, y_n, y_hint
-
 y_yes: .byte "YES", 0
 y_no: .byte "NO", 0
 y_y: .byte "Y", 0
 y_n: .byte "N", 0
 y_hint: .byte "HINT", 0
-
-NAV_COUNT = 10
-nav_ptrs:
-    .word n_north, n_nw, n_west, n_sw, n_south, n_se, n_east, n_ne, n_up, n_down
 
 n_north: .byte "NORTH", 0
 n_nw: .byte "NORTHWEST", 0
@@ -1012,3 +1106,12 @@ n_east: .byte "EAST", 0
 n_ne: .byte "NORTHEAST", 0
 n_up: .byte "UP", 0
 n_down: .byte "DOWN", 0
+
+m_echo: .byte "ECHO", 0
+m_odysseus: .byte "ODYSSEUS", 0
+m_ulysses: .byte "ULYSSES", 0
+m_temple: .byte "TEMPLE", 0
+m_pray: .byte "PRAY", 0
+m_treasure: .byte "TREASURE", 0
+
+w_all: .byte "ALL", 0
