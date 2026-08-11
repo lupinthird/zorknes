@@ -114,8 +114,8 @@ theme_c64:
     .byte $0C, $31, $0F, $0F
     .byte $0C, $31, $0F, $0F
 theme_amber:
-    ; Very dark blue backdrop, amber mono text
-    .byte $02, $27, $0F, $0F
-    .byte $02, $27, $0F, $0F
-    .byte $02, $27, $0F, $0F
-    .byte $02, $27, $0F, $0F
+    ; True-black backdrop, amber mono text
+    .byte $0F, $27, $0F, $0F
+    .byte $0F, $27, $0F, $0F
+    .byte $0F, $27, $0F, $0F
+    .byte $0F, $27, $0F, $0F

@@ -29,6 +29,7 @@ TILE_BLANK = $FF             ; color-0 blank in both banks (seam gutter)
 
 ; ~5 seconds at 60 Hz
 ERASE_HOLD_FRAMES = 300
+EGG_HOLD_FRAMES   = 300
 
 ; Keyboard: F1=$80 (palette), F8=$81 (erase save on title)
 KEY_F1 = $80
@@ -42,6 +43,8 @@ title_col:    .res 1
 title_lo:     .res 1
 title_hi:     .res 1
 erase_hold:   .res 2       ; 16-bit frame counter while A+B held
+egg_hold:     .res 2       ; 16-bit frame counter while Left+A held
+title_egg:    .res 1       ; 1 = dedication page (no logo CHR split)
 chr_plane0:   .res 8       ; scratch for title paper-font convert
 
 .segment "CODE"
@@ -49,15 +52,15 @@ chr_plane0:   .res 8       ; scratch for title paper-font convert
 ; Called from NMI when title_active ≠ 0.
 .proc title_nmi
     bit PPUSTATUS
-    ; Every frame (not only when dirty) so the timed split stays aligned.
     jsr palette_apply_title_text
-
-    lda #PPUCTRL_LOGO
-    sta PPUCTRL
     lda #0
     sta PPUSCROLL
     sta PPUSCROLL
-
+    lda title_egg
+    bne @egg
+    ; Every frame so the timed logo/font split stays aligned.
+    lda #PPUCTRL_LOGO
+    sta PPUCTRL
     ldy #SPLIT_OUTER
 @outer:
     ldx #SPLIT_INNER
@@ -66,7 +69,10 @@ chr_plane0:   .res 8       ; scratch for title paper-font convert
     bne @inner
     dey
     bne @outer
-
+    lda #PPUCTRL_TEXT
+    sta PPUCTRL
+    rts
+@egg:
     lda #PPUCTRL_TEXT
     sta PPUCTRL
     rts
@@ -79,13 +85,18 @@ chr_plane0:   .res 8       ; scratch for title paper-font convert
     jsr title_upload_logo
     jsr title_prepare_split_chr
     jsr title_fill_paper
+    jsr title_bank6_on
     jsr title_write_messages
+    jsr title_bank6_off
     jsr title_setup_palettes
     jsr palette_apply_title_text
 
     lda #0
     sta erase_hold
     sta erase_hold+1
+    sta egg_hold
+    sta egg_hold+1
+    sta title_egg
 
     lda #1
     sta kb_enable
@@ -117,6 +128,9 @@ chr_plane0:   .res 8       ; scratch for title paper-font convert
     and #(PAD_A | PAD_B)
     cmp #(PAD_A | PAD_B)
     bne @ab_reset
+    lda #0
+    sta egg_hold
+    sta egg_hold+1
     inc erase_hold
     bne @ab_chk
     inc erase_hold+1
@@ -125,14 +139,34 @@ chr_plane0:   .res 8       ; scratch for title paper-font convert
     cmp #<ERASE_HOLD_FRAMES
     lda erase_hold+1
     sbc #>ERASE_HOLD_FRAMES
-    bcc @ab_done
+    bcc @hold_done
     jsr title_do_erase
-    jmp @ab_done
+    jmp @hold_done
 @ab_reset:
     lda #0
     sta erase_hold
     sta erase_hold+1
-@ab_done:
+    ; Hold Left+A (without B) for ~5s → dedication
+    lda pad1
+    and #(PAD_A | PAD_B | PAD_LEFT)
+    cmp #(PAD_A | PAD_LEFT)
+    bne @egg_reset
+    inc egg_hold
+    bne @egg_chk
+    inc egg_hold+1
+@egg_chk:
+    lda egg_hold
+    cmp #<EGG_HOLD_FRAMES
+    lda egg_hold+1
+    sbc #>EGG_HOLD_FRAMES
+    bcc @hold_done
+    jsr title_easter_egg
+    jmp @hold_done
+@egg_reset:
+    lda #0
+    sta egg_hold
+    sta egg_hold+1
+@hold_done:
 
     lda pad1_pressed
     and #PAD_START
@@ -155,7 +189,9 @@ chr_plane0:   .res 8       ; scratch for title paper-font convert
     jmp @frame
 @not_f8:
     cmp #$0D
-    bne @frame
+    beq @got_enter
+    jmp @frame
+@got_enter:
     lda #INPUT_MODE_KB
     sta input_mode
 @dismiss:
@@ -175,6 +211,7 @@ chr_plane0:   .res 8       ; scratch for title paper-font convert
     sta PPUMASK
     jsr wait_vblank
     jsr zsave_erase
+    jsr title_bank6_on
     lda #<msg_erased
     sta str_ptr
     lda #>msg_erased
@@ -182,11 +219,124 @@ chr_plane0:   .res 8       ; scratch for title paper-font convert
     ldx #22
     ldy #1
     jsr title_put_str_at
+    jsr title_bank6_off
     jsr wait_vblank
     lda #PPUCTRL_LOGO
     sta PPUCTRL
     lda #PPUMASK_ON
     sta PPUMASK
+    rts
+.endproc
+
+; Full-screen dedication. NMI uses font CHR only (no logo split).
+.proc title_easter_egg
+    lda #0
+    sta egg_hold
+    sta egg_hold+1
+    lda #1
+    sta title_egg
+    lda #0
+    sta PPUMASK
+    jsr wait_vblank
+    jsr title_fill_all_paper
+    jsr title_bank6_on
+    lda #<msg_egg
+    sta str_ptr
+    lda #>msg_egg
+    sta str_ptr+1
+    ldx #3
+    ldy #0
+    jsr title_put_str_at
+    jsr title_bank6_off
+    jsr wait_vblank
+    lda #PPUCTRL_TEXT
+    sta PPUCTRL
+    lda #PPUMASK_ON
+    sta PPUMASK
+@wait:
+    lda frame_count
+@w:
+    cmp frame_count
+    beq @w
+    jsr read_pads
+    lda pad1_pressed
+    and #PAD_START
+    bne @done
+    jsr read_keyboard
+    jsr keyboard_poll_chars
+    lda key_ready
+    beq @wait
+    lda #0
+    sta key_ready
+    lda key_ascii
+    cmp #$0D
+    bne @wait
+@done:
+    lda #0
+    sta PPUMASK
+    jsr wait_vblank
+    jsr title_upload_logo
+    jsr title_fill_paper
+    jsr title_bank6_on
+    jsr title_write_messages
+    jsr title_bank6_off
+    jsr title_setup_palettes
+    jsr palette_apply_title_text
+    lda #0
+    sta title_egg
+    jsr wait_vblank
+    lda #PPUCTRL_LOGO
+    sta PPUCTRL
+    lda #PPUMASK_ON
+    sta PPUMASK
+    ; Don't re-fire until Left+A are released.
+@rel:
+    lda frame_count
+@relw:
+    cmp frame_count
+    beq @relw
+    jsr read_pads
+    lda pad1
+    and #(PAD_A | PAD_LEFT)
+    bne @rel
+    lda #0
+    sta egg_hold
+    sta egg_hold+1
+    rts
+.endproc
+
+.proc title_bank6_on
+    lda #6
+    jmp mmc1_set_prg
+.endproc
+
+.proc title_bank6_off
+    lda #0
+    jmp mmc1_set_prg
+.endproc
+
+.proc title_fill_all_paper
+    bit PPUSTATUS
+    lda #$20
+    sta PPUADDR
+    lda #$00
+    sta PPUADDR
+    lda #' '
+    ldx #30
+@row:
+    ldy #32
+@col:
+    sta PPUDATA
+    dey
+    bne @col
+    dex
+    bne @row
+    lda #$AA                    ; all quads = text palette 2
+    ldx #64
+@attr:
+    sta PPUDATA
+    dex
+    bne @attr
     rts
 .endproc
 
@@ -347,6 +497,14 @@ chr_plane0:   .res 8       ; scratch for title paper-font convert
     ldy #1
     jsr title_put_str_at
 
+    lda #<msg_nofsale
+    sta str_ptr
+    lda #>msg_nofsale
+    sta str_ptr+1
+    ldx #24
+    ldy #1
+    jsr title_put_str_at
+
     lda #<msg_copy
     sta str_ptr
     lda #>msg_copy
@@ -354,12 +512,18 @@ chr_plane0:   .res 8       ; scratch for title paper-font convert
     ldx #26
     ldy #1
     jsr title_put_str_at
+
+    lda #<msg_mit
+    sta str_ptr
+    lda #>msg_mit
+    sta str_ptr+1
+    ldx #28
+    ldy #1
+    jsr title_put_str_at
     rts
 .endproc
 
-.proc title_put_str_at
-    stx title_row
-    sty title_col
+.proc title_seek
     lda #0
     sta title_hi
     lda title_row
@@ -382,20 +546,30 @@ chr_plane0:   .res 8       ; scratch for title paper-font convert
     sta PPUADDR
     lda title_lo
     sta PPUADDR
-    ldy #0
+    rts
+.endproc
+
+; Mixed-case; $0A newline. Walks str_ptr (strings may be >255 bytes).
+.proc title_put_str_at
+    stx title_row
+    sty title_col
+    jsr title_seek
 @loop:
+    ldy #0
     lda (str_ptr),y
     beq @done
-    cmp #'a'
-    bcc @store
-    cmp #'z'+1
-    bcs @store
-    sec
-    sbc #$20
-@store:
+    cmp #$0A
+    beq @nl
     sta PPUDATA
-    iny
+@adv:
+    inc str_ptr
     bne @loop
+    inc str_ptr+1
+    jmp @loop
+@nl:
+    inc title_row
+    jsr title_seek
+    jmp @adv
 @done:
     rts
 .endproc
@@ -485,7 +659,8 @@ chr_plane0:   .res 8       ; scratch for title paper-font convert
     rts
 .endproc
 
-.segment "RODATA"
+; Title copy lives in PRG bank 6 (ROM7 is full). Bank 6 in before printing.
+.segment "STORY6"
 msg_kb:
     .byte "Enter=Keyboard   Start=Gamepad", 0
 msg_f1:
@@ -494,7 +669,24 @@ msg_erase:
     .byte "F8 / Hold A+B 5s = Erase Save", 0
 msg_erased:
     .byte "Save Data Erased.             ", 0
+msg_nofsale:
+    .byte "Not for sale or commercial use", 0
 msg_copy:
     .byte "github.com/lupinthird/zorknes", 0
+msg_mit:
+    .byte "Zork I  MIT (c) 2025 Microsoft", 0
+msg_egg:
+    .byte "Thank you for trying this game.", $0A
+    .byte "My dad and I played this on our", $0A
+    .byte "C-64 when I was a kid. He's gone", $0A
+    .byte "now, but I wanted to commemorate", $0A
+    .byte "our time by bringing this game", $0A
+    .byte "to the best retro console ever,", $0A
+    .byte "the NES.", $0A, $0A
+    .byte "Let me know what you thought!", $0A
+    .byte "Chris", $0A
+    .byte "lupin3rd@gmail.com", $0A, $0A
+    .byte "Press START or ENTER to exit.", 0
 
+.segment "RODATA"
 .include "../nam/zorklogont.s"

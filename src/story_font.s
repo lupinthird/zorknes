@@ -1,4 +1,4 @@
-; Bank 6: story tail (6960 bytes) + font CHR (4 KiB) + logo CHR (4 KiB) + pad
+; Bank 6: story tail (6960 bytes) + font CHR (4 KiB) + logo CHR (4 KiB) + title strings
 
 .export font_chr
 
@@ -8,4 +8,4 @@ story6_data:
 font_chr:
     .incbin "../chr/zork_new2.chr"       ; $0000–$0FFF (BG text)
     .incbin "../chr/logotiles.chr"  ; $1000–$1FFF (title logo)
-    .res 16384 - 6960 - 8192, $FF
+    ; Remainder of STORY6: title strings (title.s) then $FF pad from the linker.

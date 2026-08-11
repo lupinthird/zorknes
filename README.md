@@ -52,6 +52,14 @@ C:\Mesen\Mesen.exe C:\Mesen\ROMs\neszork.nes E:\GemmaProjects\NESZork1\scripts\z
 
 Rebuild the ROM before running so label addresses match.
 
+## Licensing
+
+**Zork I story data** (`story/zork1.z5`) is derived from Infocom’s Zork I. Microsoft, Activision, and Team Xbox released that source under the MIT License in 2025. The required copyright notice and permission text are in [`story/LICENSE`](story/LICENSE) (`Copyright (c) 2025 Microsoft`). That grant covers the story/source code only — it does **not** include trademark rights to “Zork”, “Infocom”, or related brands, nor commercial packaging or marketing materials.
+
+Any copy or substantial portion of this project that includes the story file must keep `story/LICENSE` alongside it.
+
+**This NES port** (interpreter, title, and tooling under `src/`, `nam/`, `chr/`, `scripts/`) is a non-commercial fan commemoration. It is **not for sale or commercial use**.
+
 ## Status (v0.1-alpha)
 
 Phase 1 plan milestones are complete: SXROM bring-up, Family BASIC keyboard, Z-machine core, and playable early Zork I (LOOK / move / take / read).
