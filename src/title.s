@@ -670,7 +670,7 @@ chr_plane0:   .res 8       ; scratch for title paper-font convert
 ; Title copy lives in PRG bank 6 (ROM7 is full). Bank 6 in before printing.
 .segment "STORY6"
 msg_ver:
-    .byte "                          v1.0", 0
+    .byte "                          v1.1", 0
 msg_kb:
     .byte "Enter=Keyboard   Start=Gamepad", 0
 msg_f1:

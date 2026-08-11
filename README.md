@@ -2,7 +2,7 @@
 
 ca65/cl65 Z-machine interpreter for NES targeting **MMC1 SXROM** (128 KB PRG, 32 KB battery WRAM, 8 KB CHR-RAM). Playable Zork I on a 32-column screen with mixed-case text, pixel-smooth story scrolling, battery **SAVE** / **RESTORE**, and a title screen that locks input to either the Family BASIC keyboard or a gamepad word picker.
 
-Title version: **v1.0**. Source: [github.com/lupinthird/zorknes](https://github.com/lupinthird/zorknes).
+Title version: **v1.1**. Source: [github.com/lupinthird/zorknes](https://github.com/lupinthird/zorknes).
 
 ## Build
 
@@ -99,13 +99,13 @@ Any copy or substantial portion of this project that includes the story file mus
 
 **This NES port** (interpreter, title, and tooling under `src/`, `nam/`, `chr/`, `scripts/`) is a non-commercial fan commemoration. It is **not for sale or commercial use**.
 
-## Status (v1.0)
+## Status (v1.1)
 
 Playable Zork I: 32-column mixed-case output with word-boundary wrapping, Solid Gold status line, smooth NT2 story scroll (MMC1 horizontal mirroring), title logo/font CHR split, gamepad word picker, Family BASIC keyboard, battery save/restore, theme preview, and QUIT back to title.
 
 Still interpreter-side gaps, not required for a normal playthrough: `scan_table` is unimplemented; packing is sized for this `zork1.z5` rather than arbitrary story files.
 
-## Cart packing (v1.0)
+## Cart packing (v1.1)
 
 MMC1 SXROM is eight 16 KiB PRG banks. The Z-machine story eats most of them. Word-picker strings live in ROM6 so ROM7 can hold the interpreter. Snapshot from `build/neszork.map`:
 
