@@ -1493,7 +1493,9 @@ WORD_BUF = oam + $80
 @st3done:
     rts
 @screen:
-    ; Upper/status window: immediate put (clip in text_put_char).
+    ; Upper/status window: immediate put. Large splits (Invisiclues) wrap
+    ; at the tile edge in text_put_char; word-buffering here would fight
+    ; set_cursor-based menus.
     ldx win_cur
     bne @immediate
 

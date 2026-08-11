@@ -2,7 +2,7 @@
 
 ca65/cl65 Z-machine interpreter for NES targeting **MMC1 SXROM** (128 KB PRG, 32 KB battery WRAM, 8 KB CHR-RAM). Playable Zork I on a 32-column screen with mixed-case text, pixel-smooth story scrolling, battery **SAVE** / **RESTORE**, and a title screen that locks input to either the Family BASIC keyboard or a gamepad word picker.
 
-Title version: **v1.1**. Source: [github.com/lupinthird/zorknes](https://github.com/lupinthird/zorknes).
+Title version: **v1.2**. Source: [github.com/lupinthird/zorknes](https://github.com/lupinthird/zorknes).
 
 ## Build
 
@@ -99,13 +99,13 @@ Any copy or substantial portion of this project that includes the story file mus
 
 **This NES port** (interpreter, title, and tooling under `src/`, `nam/`, `chr/`, `scripts/`) is a non-commercial fan commemoration. It is **not for sale or commercial use**.
 
-## Status (v1.1)
+## Status (v1.2)
 
-Playable Zork I: 32-column mixed-case output with word-boundary wrapping, Solid Gold status line, smooth NT2 story scroll (MMC1 horizontal mirroring), title logo/font CHR split, gamepad word picker, Family BASIC keyboard, battery save/restore, theme preview, and QUIT back to title.
+Playable Zork I: 32-column mixed-case output with word-boundary wrapping, Solid Gold status line, smooth NT2 story scroll (MMC1 horizontal mirroring), title logo/font CHR split, gamepad word picker, Family BASIC keyboard, battery save/restore, theme preview, and QUIT back to title. HINT / Invisiclues clears the lower window cleanly after a lazy scroll settle; story scroll no longer pulls stale NT2 rows into view during multiline bursts.
 
 Still interpreter-side gaps, not required for a normal playthrough: `scan_table` is unimplemented; packing is sized for this `zork1.z5` rather than arbitrary story files.
 
-## Cart packing (v1.1)
+## Cart packing (v1.2)
 
 MMC1 SXROM is eight 16 KiB PRG banks. The Z-machine story eats most of them. Word-picker strings live in ROM6 so ROM7 can hold the interpreter. Snapshot from `build/neszork.map`:
 
@@ -113,7 +113,7 @@ MMC1 SXROM is eight 16 KiB PRG banks. The Z-machine story eats most of them. Wor
 | --- | --- | ---: | ---: |
 | ROM0–ROM5 | `zork1.z5` story | 16,384 × 6 | 0 |
 | ROM6 | Story tail (6,960) + font (4 KiB) + logo CHR (4 KiB) + title strings + HUD helpers + picker words | 16,359 | **25** |
-| ROM7 | Interpreter `CODE` + `RODATA` + vectors | 16,074 | **310** |
+| ROM7 | Interpreter `CODE` + `RODATA` + vectors | 16,133 | **251** |
 
 Zeropage is 255 / 256 bytes; onboard BSS (`$0300–$07FF`) has **1 byte** left. Sprites are unused (OAM is reserved anyway).
 
@@ -122,7 +122,7 @@ Where ROM7’s ~16 KiB of code and tables actually go:
 | Slice | Bytes | Share of ROM7 |
 | --- | ---: | ---: |
 | Z-machine (`zops` / `zdecode` / `ztoken` / `zvm` / `zmem`) | 7,459 | 46% |
-| Text engine (`ppu_text`, including scroll) | 2,453 | 15% |
+| Text engine (`ppu_text`, including scroll) | 2,512 | 16% |
 | Title (routines + 1 KiB nametable) | 2,128 | 13% |
 | Gamepad word picker (`pad_ui` code + pointers; strings in ROM6) | 1,602 | 10% |
 | Battery SAVE / RESTORE | 965 | 6% |
@@ -130,4 +130,4 @@ Where ROM7’s ~16 KiB of code and tables actually go:
 | Family BASIC keyboard | 296 | 2% |
 | Themes, MMC1, NMI, pad strobe, typewriter SFX | ~445 | 3% |
 
-The NT2 smooth-scroll path is about **760 bytes** of `ppu_text` (plus HUD helpers in ROM6). Picker word lists (~560 bytes) also sit in ROM6. A music engine still does not fit: ROM6 has 25 bytes left, and 310 bytes in ROM7 is not a soundtrack.
+The NT2 smooth-scroll path is about **820 bytes** of `ppu_text` (plus HUD helpers in ROM6). Picker word lists (~560 bytes) also sit in ROM6. A music engine still does not fit: ROM6 has 25 bytes left, and 251 bytes in ROM7 is not a soundtrack.

@@ -419,7 +419,29 @@ nt_mirror:   .res 1024
     sta scroll_nt2_row
     jsr clear_nt2_row
     inc scroll_buf_fill
-    inc scroll_queue
+    ; Scroll only far enough to put the new content row at the bottom
+    ; (y → fill*8). The extra +8 HUD gutter is settle's job — queuing +8
+    ; here while the camera was already parked on the gutter revealed the
+    ; unallocated fill+1 row (stale tiles) during multiline bursts.
+    lda scroll_buf_fill
+    asl a
+    asl a
+    asl a
+    sta scroll_tmp              ; target y = fill*8
+    sec
+    sbc scroll_y
+    beq @have_q                 ; already there (first line into settled gutter)
+    bcc @have_q                 ; y past target (gutter); settle will adjust
+    clc
+    adc #7                      ; ceil(pixel delta / 8)
+    lsr a
+    lsr a
+    lsr a
+    cmp scroll_queue
+    bcc @have_q
+    beq @have_q
+    sta scroll_queue
+@have_q:
     lda #1
     sta scroll_busy
     sta scroll_nt2
@@ -612,6 +634,24 @@ nt_mirror:   .res 1024
     rts
 .endproc
 
+; Drop the NT2 camera immediately. Used when HINT / erase_window must show
+; a clean NT0 (lazy settle leaves scroll_y≠0 and would skip resync).
+.proc scroll_abort_to_zero
+    lda #0
+    sta scroll_y
+    sta scroll_queue
+    sta scroll_pix
+    sta scroll_busy
+    sta scroll_need_snap
+    sta scroll_buf_fill
+    sta scroll_nt2
+    sta scroll_nt2_row
+    sta scroll_phase
+    sta scroll_snap_row
+    sta scroll_snap_n
+    rts
+.endproc
+
 ; End of a scroll burst. Never blanks the screen (PPUMASK stays on).
 ; Typical command: leave the camera at scroll_y and VQ the status bar
 ; onto the visible top row. Compact (Y→0) only when NT2 is full, and
@@ -648,6 +688,10 @@ nt_mirror:   .res 1024
     adc #8
     cmp scroll_y
     beq @place
+    ; Blank the gutter before the +8px reveal (clear-after-arrive left a
+    ; frame of stale tiles at the bottom).
+    lda scroll_buf_fill
+    jsr clear_nt2_row
     inc scroll_queue
     rts
 @place:
@@ -1063,12 +1107,11 @@ nt_mirror:   .res 1024
 @done:
     jsr zmem_wram_text_off
 .if ::SMOOTH_SCROLL
-    lda scroll_busy
-    ora scroll_y
-    bne @ret
+    ; Lazy settle parks scroll_y≠0 and skips resync — HINT then clears the
+    ; mirror while NT2 still shows old room text. Abort the camera first.
+    jsr scroll_abort_to_zero
 .endif
     jsr begin_nt_resync
-@ret:
     rts
 .endproc
 
@@ -1524,7 +1567,12 @@ nt_mirror:   .res 1024
     cmp #SCREEN_COLS
     bcc @done
     lda win_cur
-    bne @uclip                ; upper: stay on last visible column
+    beq @main_nl
+    ; Upper: 1-line status clips; Invisiclues (large split) wraps like main.
+    lda win_split
+    cmp #4
+    bcc @uclip
+@main_nl:
     jsr text_newline
 @done:
     rts

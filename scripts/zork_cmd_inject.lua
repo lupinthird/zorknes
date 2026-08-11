@@ -181,9 +181,16 @@ function M.tick()
     return "busy"
   end
 
-  -- [MORE] / HINT / any read_char: dismiss with Space so the queue can proceed.
+  -- [MORE]: Space. HINT confirm / menus: Return (Space is not always enough).
   if M.waiting_char() then
-    M.inject_char(0x20)
+    local split = 0
+    local ok, s = pcall(function() return M.rd("win_split") end)
+    if ok and s then split = s end
+    if split >= 10 then
+      M.inject_char(0x0D)      -- Invisiclues: Return
+    else
+      M.inject_char(0x20)      -- [MORE] / short prompts
+    end
     busy_until = frame + 8
     return "more"
   end
