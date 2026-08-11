@@ -699,4 +699,4 @@ msg_egg:
     .byte "Press START or ENTER to exit.", 0
 
 .segment "RODATA"
-.include "../nam/zorklogont.asm"
+.include "../nam/zorklogont.s"

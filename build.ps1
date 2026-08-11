@@ -12,17 +12,7 @@ if (-not $needSplit) {
     $needSplit = (Get-Item $storySrc).LastWriteTime -gt (Get-Item $story0).LastWriteTime
 }
 if ($needSplit) {
-    python -c @"
-from pathlib import Path
-story=Path('story/zork1.z5').read_bytes()
-bank=16384
-out=Path('build/story_banks'); out.mkdir(parents=True, exist_ok=True)
-n=(len(story)+bank-1)//bank
-padded=story+bytes([0xFF])*(n*bank-len(story))
-for i in range(n):
-    (out/f'story{i}.bin').write_bytes(padded[i*bank:(i+1)*bank])
-print('story banks', n)
-"@
+    python scripts/split_story.py
 }
 
 $ca65 = "C:\cc65\bin\ca65.exe"
